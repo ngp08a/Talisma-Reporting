@@ -1,0 +1,1475 @@
+USE [tlArchive]
+GO
+/****** Object:  StoredProcedure [dbo].[ACU_spReportingDataMaint]    Script Date: 05/21/2014 11:00:52 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER PROCEDURE [dbo].[ACU_spReportingDataMaint]  AS
+SET ANSI_NULLS OFF
+
+--Set Entry_Term_Offset in Reporting based on cluster's tlMain ACU_EntryTerm table
+--Added by Nick Peterson on 3-25-2009
+update reporting
+set Entry_Term_Offset = ET.EntryTermOffset
+From tlAnalytics.DBO.ACU_EntryTerm ET
+Inner Join Reporting R on ET.TermCode = R.Term_Code
+
+--remove admit date where student wasn't admitted for this term
+update reporting set admit_date = NULL 
+From Reporting R
+Left Outer Join [tlAnalytics].[DBO].tblObjectType3_4 C4 on C4.nID = R.Talisma_ID
+where admit_date > ' ' 
+AND enroll_status = 'Applicant'
+AND [FldNumeric21974] not in (12,14,15,9,19,20)
+
+update reporting 
+set DENY_DATE=ADMIT_DATE,
+admit_date = NULL 
+From Reporting R
+Left Outer Join [tlAnalytics].[DBO].tblObjectType3_4 C4 on C4.nID = R.Talisma_ID
+where admit_date > ' ' 
+AND enroll_status = 'Deny'
+
+
+--*********************************************************************************************************************
+
+--update territory_code into name
+update reporting
+set recruit_region = tname
+from reporting, tlanalytics.dbo.tbluser tbluser
+where reporting.recruit_region = tbluser.aUserId
+and left(recruit_region,1) In('1','2','3','4','5','6','7','8','9','0')
+
+/*
+--UPDATE TERRITORY_CODE
+Update reporting
+Set TERRITORY_CODE = T.tID
+--Select R.RECRUIT_REGION, U.tName, T.tID
+From 
+reporting R
+inner join tlAnalytics..tblUser U on U.tName = R.RECRUIT_REGION
+Inner Join TALSQL.tlMain.DBO.tblTerritory T on T.tmSenior = U.aUserID
+WHERE R.TERRITORY_CODE is null
+*/
+
+
+--and term_code >= 200730
+
+--set territory_assignment for all students based upon current year information
+
+/*-- set terriory assignment for non texas students   
+Update reporting set recruit_region=(select tname from tlAnalytics.dbo.tbluser where tname=ta.TerritoryManager10)      
+--select cp6.nid
+from reporting rpt      
+inner join TALSQL.tlmain.dbo.tblTerritoryAssign ta  on ltrim(rtrim(ta.State))=ltrim(rtrim(rpt.state))      
+Where left(app_type,1) In('N') 
+and rpt.state <> 'TX' 
+and Entry_Term_Offset <= 0
+AND recruit_region<>(select tname from tlAnalytics.dbo.tbluser where tname=ta.TerritoryManager10)      
+    
+-- set territory assignment for texas students   
+Update reporting set recruit_region=(select tname from tlAnalytics.dbo.tbluser where tname=      
+(select a.TerritoryManager10 from TALSQL.tlmain.dbo.tblterritoryassign a          
+where a.county = rpt.county))      
+from reporting rpt          
+inner join TALSQL.tlmain.dbo.tblTerritoryAssign a on ltrim(rtrim(a.county))=ltrim(rtrim(rpt.county))       
+Where rtrim(ltrim(rpt.state))='TX' and  substring(rpt.zip_code,1,5)like '[0-9][0-9][0-9][0-9][0-9]'      
+and left(app_type,1) In('N') 
+--and left(rpt.term_code, 6) >= 200020 
+--and recruit_region is null  
+
+-- set territory assignment for transfers
+Update reporting set recruit_region=(select tname from tlAnalytics.dbo.tbluser  where tname=      
+(select territorymanager10 from TALSQL.tlmain.dbo.tblTerritoryAssign  where State='Transfer'))      
+from reporting rpt          
+Where left(app_type,1) In('T') 
+--and left(rpt.term_code, 6) >= 200020  
+and market_segment In('TRFC', 'TRFO')
+--and recruit_region is null
+
+-- set territory assignment for international students
+Update reporting set recruit_region = (select tname from tlAnalytics.dbo.tbluser  where tname=      
+(select TerritoryManager10 from TALSQL.tlmain.dbo.tblTerritoryAssign  where State='INT'))    
+from reporting rpt                  
+Where (international_ind In('NA') or market_segment = 'INT')
+and left(app_type,1) In('N','T') 
+--and left(rpt.term_code, 6) >= 200020   
+--and recruit_region is null*/
+
+--***************************************************************************************************************************************
+--update count of visits and initial_visit_date from Talisma
+
+update reporting set count_of_visits = visits.total_visits,
+initial_visit_date = initvisit.visitdate
+from reporting rpt,
+	(select cvp1.FldNumeric22764 as TalismaId, count (*) as total_visits
+	from tlAnalytics.dbo.tblObjectType5006_1 cvp1 
+	inner join tblcustomer c  on cvp1.FldNumeric22764=c.acustid 
+	left outer join tblenum attend  on attend.nIndex=cvp1.FldNumeric22608 and attend.nconstraintid=3000330 
+	where attend.tdisplayname='YES'
+	group by cvp1.FldNumeric22764
+	--order by count (*) desc
+	) visits, 
+		(select cvp1.FldNumeric22764 as TalismaId, min(FldDate22605) as visitdate
+		from tlAnalytics.dbo.tblObjectType5006_1 cvp1 
+		--inner join tblcustomer c  on cvp1.FldNumeric22764=c.acustid 
+		left outer join tblenum attend  on attend.nIndex=cvp1.FldNumeric22608 and attend.nconstraintid=3000330 
+		where attend.tdisplayname='YES'
+		and FldDate22605 > ' '
+		group by cvp1.FldNumeric22764
+		--order by cvp1.FldNumeric22764
+		) initvisit
+where visits.talismaid = rpt.talisma_id
+and visits.talismaid = initvisit.TalismaId
+
+update reporting set count_of_visits = 0 where count_of_visits is null
+
+update reporting 
+set did_student_visit = CASE
+when did_student_visit = 'Yes' then 'Yes'
+when initial_visit_date > ' ' then 'Yes'
+when count_of_visits >= 1 then 'Yes'
+when campus_visit = 'Y' then 'Yes'
+else 'No'
+end;
+
+update reporting
+set stage_at_first_visit = case
+when inq_date - initial_visit_date > 28 then 'Unknown'
+when inq_date - initial_visit_date between 0 and 28 then 'Inquiry'
+when initial_visit_date >= inq_date and initial_visit_date < app_date then 'Inquiry'
+when initial_visit_date >= app_date and initial_visit_date < admit_date then 'Applicant'
+when initial_visit_date >= admit_date and enroll_status In('Admit', 'Confirmed', 'Enrolled') then 'Admit'
+when initial_visit_date >= admit_date and enroll_status In('Deny') then 'Applicant'
+--when initial_visit_date >= app_date and initial_visit_date < admit_date then 'Confirmed'
+else stage_at_first_visit
+end;
+
+
+--***************************************************************************************************************************************
+/* REMARK OUT FOR NOW - BY KEVIN CAMPBELL - TAKES LONG TIME AND WE ARE NOT USING CURRENTLY
+--update the latitude from the acu_zipcodes database
+update "TALRPT".tlarchive.dbo.reporting
+set latitude = (select min(lat) from tlAnalytics.dbo.ACU_Zipcodes where zip = reporting.zip_code)
+from "TALRPT".tlarchive.dbo.reporting reporting
+--inner join tblcustomer c with (nolock) on c.acustid = c10.nid
+inner join tlAnalytics.dbo.ACU_Zipcodes tblzip on tblzip.zip = reporting.zip_code
+--where reporting.pidm = 53344
+--where c.acustid = 760141
+where latitude is null
+
+
+--update the longitude from the acu_zipcodes database
+update "TALRPT".tlarchive.dbo.reporting
+set longitude = (select min(lng) from tlAnalytics.dbo.ACU_Zipcodes where zip = reporting.zip_code)
+from "TALRPT".tlarchive.dbo.reporting reporting
+--inner join tblcustomer c with (nolock) on c.acustid = c10.nid
+inner join tlAnalytics.dbo.ACU_Zipcodes tblzip on tblzip.zip = reporting.zip_code
+--where reporting.pidm = 53344
+where longitude is null
+
+
+--update the distance_from_acu from the acu_zipcodes database
+update reporting
+set distance_from_acu = (sin(radians(32.4697)) * sin(radians(latitude))) +
+(cos(radians(32.4697)) * cos(radians(latitude)) *
+cos(radians(99.7089 - longitude))) * 69.09
+--where nid = 760141
+where distance_from_acu is null
+--update reporting set distance_from_acu = (degrees(acos(distance_from_acu))) * 69.09
+
+
+--set the geo_market based upon collegeboard (geomarket)
+update "TALRPT".tlarchive.dbo.reporting
+set geo_market = (select min(ZipCluster) from tlAnalytics.dbo.zip_cluster where ZipCode = reporting.zip_code)
+from "TALRPT".tlarchive.dbo.reporting reporting
+--inner join tblcustomer c with (nolock) on c.acustid = c10.nid
+inner join tlAnalytics.dbo.zip_cluster tblcluster on tblcluster.ZipCode = reporting.zip_code
+--where reporting.pidm = 53344
+--where c.acustid = 760141
+where geo_market is null
+*/
+--************************************************************************************************************************************************************
+--set complete app flag
+update reporting
+set complete_app_flag = CASE
+when left(complete_app_flag,1) = 'Y' then 'Y'
+when enroll_status In('Admit', 'Deny', 'Confirmed', 'Enrolled') then 'Y'
+else 'N'
+end;
+
+--************************************************************************************************************************************************************
+--selects the count of incoming phone calls from a student
+update reporting set count_of_in_calls = incoming.calls
+from reporting rpt, (select nOriginatorID, count(*) as calls--top 1000 bincomingoroutgoing, ntype, nmediatype, naliasid, *
+			from tlAnalytics.dbo.tblMessage t1
+			inner join tlAnalytics.dbo.tblcase t2 on t2.aGlobalCaseId = t1.nGlobalCaseId
+			where t1.bincomingoroutgoing = 1 -- direction is incoming
+			and t1.nmediatype = 1 -- phone call
+			and t2.nQueueId In(2,8,9,12) -- team is undergrad admissions, HelpLine, Student Recruiters, or Campus Visits
+			group by nOriginatorId
+			) incoming
+where incoming.noriginatorid = rpt.talisma_id
+
+update reporting set count_of_in_calls = 0 where count_of_in_calls is null
+
+--outgoing phone calls
+update reporting set count_of_out_calls = outgoing.calls
+from reporting rpt, (select t2.nCustId, count(*) as calls --top 1000 bincomingoroutgoing, ntype, nmediatype, naliasid, *
+			from tlAnalytics.dbo.tblMessage t1
+			inner join tlAnalytics.dbo.tblcase t2 on t2.aGlobalCaseId = t1.nGlobalCaseId
+			inner join tlAnalytics.dbo.tblObjectType7_1 t3 on t3.nid = t1.nGlobalCaseId
+			where t1.bincomingoroutgoing = 0 -- direction is outgoing
+			and t3.FldNumeric22747 In(4,10) -- call was successful or talked to parent
+			and t1.nmediatype = 1 -- phone call
+			and t2.nQueueId In(2,12) -- team is undergrad admissions or Campus Visits
+			group by t2.nCustId
+			) outgoing
+
+where outgoing.nCustId = rpt.talisma_id
+
+update reporting set count_of_out_calls = 0 where count_of_out_calls is null
+
+
+--face to face
+update reporting set count_of_face_to_face = face.meetings
+from reporting rpt, (select t1.nOriginatorId, count(*) as meetings --top 1000 bincomingoroutgoing, ntype, nmediatype, naliasid, *
+			from tlAnalytics.dbo.tblMessage t1
+			inner join tlAnalytics.dbo.tblcase t2 on t2.aGlobalCaseId = t1.nGlobalCaseId
+			where t1.nmediatype = 4 -- in person
+			and t1.nOriginatorId > 10000
+			group by t1.nOriginatorId
+			--order by t1.nOriginatorId 
+			) face
+where face.nOriginatorId = rpt.talisma_id
+
+update reporting set count_of_face_to_face = 0 where count_of_face_to_face is null
+
+
+--incoming emails (may need further verification
+update reporting set count_of_in_emails = incoming.emails
+from reporting rpt, (select t1.nOriginatorId, count(*) as emails --top 1000 bincomingoroutgoing, ntype, nmediatype, naliasid, *
+			from tlAnalytics.dbo.tblMessage t1
+			inner join tlAnalytics.dbo.tblcase t2 on t2.aGlobalCaseId = t1.nGlobalCaseId
+			where t1.nmediatype = 5 -- emails
+			and t1.bIncomingorOutgoing = 1 -- incoming
+			and t1.nOriginatorId > 1000
+			group by t1.nOriginatorId
+			--order by t1.nOriginatorId 
+			) incoming
+where incoming.nOriginatorId = rpt.talisma_id
+
+update reporting set count_of_in_emails = 0 where count_of_in_emails is null
+
+
+
+--****************************************
+
+--set core connection
+
+update reporting
+set core_connection = 'Yes'
+where (facstaff In('Child', 'Grandchild') 
+or board > ' '
+or legacy In('Child', 'Grandchild')
+or sibling = 'Yes'
+or leadership_camp = 'Yes')
+
+
+--Update department and college based on major
+Update Reporting
+Set INTENDED_DEPARTMENT = ED.tDisplayName
+	, INTENDED_COLLEGE = EC.tDisplayName
+--select INTENDED_COLLEGE, INTENDED_DEPARTMENT, AM.Department, ED.tDisplayName, AM.College, EC.tDisplayName, INTENDED_MAJOR, AM.DisplayText
+From Reporting R
+inner join tlAnalytics.dbo.tblCustomer C on C.aCustID = R.TALISMA_ID  
+inner join tlAnalytics.dbo.tblObjectType3_3 C3 on C3.nID = C.aCustID
+Inner join TALSQL.tlMain.DBO.ACU_Majors AM on AM.nindex1 = c3.FldNumeric21789
+left outer join tblEnum [EC] on [EC].nConstraintID = 3000576 and [EC].nIndex = AM.College
+left outer join tblEnum [ED] on [ED].nConstraintID = 3000575 and [ED].nIndex = AM.Department
+Where INTENDED_MAJOR = LEFT(AM.DisplayText, 4)
+
+
+--Update Broad Majors to Concentrations
+Update Reporting
+Set INTENDED_MAJOR = LEFT(AM.DisplayText,4)
+--Select LEFT(AM.DisplayText,4), INTENDED_MAJOR, AM.Concentration, C3.FldNumeric21790  
+From Reporting R 
+inner join tlAnalytics.dbo.tblCustomer C on C.aCustID = R.TALISMA_ID  
+inner join tlAnalytics.dbo.tblObjectType3_3 C3 on C3.nID = C.aCustID
+Inner join TALSQL.tlMain.DBO.ACU_Majors AM on AM.Concentration = c3.FldNumeric21790
+where C3.FldNumeric21790 = AM.Concentration
+and ENTRY_TERM_OFFSET <= 0
+
+
+/******Update YTD Test Scores from tlAnalytics******/
+--Clear out all old scores
+Update Reporting
+Set YTD_ACT_EQUIV_SENIOR = NULL
+
+Update Reporting
+Set YTD_ACT_EQUIV_JUNIOR = NULL
+
+Update Reporting
+Set YTD_ACT_EQUIV_SOPHOMORE = NULL
+
+--Update all records with YTD scores from tlAnalytics
+Update Reporting
+Set YTD_ACT_EQUIV_SENIOR = FldNumeric4300064
+from Reporting R
+Inner Join tlAnalytics.dbo.tblCustomer C on C.aCustID = R.TALISMA_ID
+left outer join tlAnalytics.dbo.tblObjectType3_10 C10 on C.aCustID = C10.nID
+where C10.FldNumeric4300064 is not null
+
+Update Reporting
+Set YTD_ACT_EQUIV_JUNIOR = FldNumeric4300065
+from Reporting R
+Inner Join tlAnalytics.dbo.tblCustomer C on C.aCustID = R.TALISMA_ID
+left outer join tlAnalytics.dbo.tblObjectType3_10 C10 on C.aCustID = C10.nID
+where C10.FldNumeric4300065 is not null
+
+Update Reporting
+Set YTD_ACT_EQUIV_SOPHOMORE = FldNumeric4300066
+from Reporting R
+Inner Join tlAnalytics.dbo.tblCustomer C on C.aCustID = R.TALISMA_ID
+left outer join tlAnalytics.dbo.tblObjectType3_10 C10 on C.aCustID = C10.nID
+where C10.FldNumeric4300066 is not null
+
+
+Declare @gpa Table (nid int, gpa float, rank int, size int, rankpercent float, Quartile varchar(50))
+
+Insert into @gpa (nid, gpa, rank, size)
+	Select HS.nID, convert(float, FldString_22412) gpa, FldNumeric_22409, FldNumeric_22410--substring(FldString_22412, 1, CHARINDEX('.', FldString_22412)-1)
+	--HS.*
+	from tlAnalytics..tblContact_11185 HS
+	Inner join tlAnalytics..tblObjectType3_10 C10 on C10.nID = HS.nID
+	Where --FldFloat4300075 in (0,1,2,3,4,5,6) and 
+	(FldNumeric_22409 is not null or FldString_22412 is not null)
+	and (ISNUMERIC(FldString_22412) = 1 or FldString_22412 is null)
+	--and FldString_22412 like '%.%'
+	
+Update @gpa
+Set rankpercent = (cast(rank as float)/nullif(CAST(size as float), 0))
+ from @gpa
+Where rank is not null
+and size is not null
+and size > 24
+
+Update @gpa
+Set Quartile = Case WHEN rankpercent >= .75000001 THEN '4 - 4th Quarter'
+	WHEN rankpercent >= .50000001 THEN '3 - 3rd Quarter'
+	WHEN rankpercent >= .25000001 THEN '2 - 2nd Quarter'
+	WHEN rankpercent >= .10000001 THEN '1b - 1st Quarter'
+	WHEN rankpercent > 0.0 THEN '1a - Top 10%'
+	END--, AVG(cast(rank as float)/nullif(CAST(size as float), 0)), COUNT(1)
+ from @gpa
+Where rankpercent is not null
+
+Update reporting
+Set CLASS_RANK_QUARTILE = G.Quartile
+--Select R.ENTRY_TERM_OFFSET, R.CLASS_RANK_QUARTILE, G.Quartile,*
+From Reporting R
+Left outer join @gpa G on G.nid = R.Talisma_ID
+where (R.CLASS_RANK_QUARTILE <> G.Quartile or R.CLASS_RANK_QUARTILE is null)
+and G.Quartile is not null
+and R.Entry_Term_Offset <= 0
+
+Update @gpa
+Set Quartile = Case WHEN gpa <= 2.2 THEN '4 - 4th Quarter'
+	WHEN gpa < 2.9 THEN '3 - 3rd Quarter'
+	WHEN gpa < 3.5 THEN '2 - 2nd Quarter'
+	WHEN gpa < 3.9 THEN '1b - 1st Quarter'
+	WHEN gpa <= 5.0 THEN '1a - Top 10%'
+	END--, AVG(cast(rank as float)/nullif(CAST(size as float), 0)), COUNT(1)
+ from @gpa
+Where gpa <= 5.0
+and gpa <> 0
+and Quartile is null
+
+Update @gpa
+Set Quartile = Case WHEN gpa <= 76 THEN '4 - 4th Quarter'
+	WHEN gpa < 85 THEN '3 - 3rd Quarter'
+	WHEN gpa < 92.5 THEN '2 - 2nd Quarter'
+	WHEN gpa < 97 THEN '1b - 1st Quarter'
+	WHEN gpa >= 97 THEN '1a - Top 10%'
+	END--, AVG(cast(rank as float)/nullif(CAST(size as float), 0)), COUNT(1)
+ from @gpa
+Where gpa > 50
+and gpa <> 0
+and Quartile is null
+
+Update reporting
+Set CLASS_RANK_QUARTILE_CALC = G.Quartile
+--Select R.ENTRY_TERM_OFFSET, R.CLASS_RANK_QUARTILE, G.Quartile,*
+From Reporting R
+Left outer join @gpa G on G.nid = R.Talisma_ID
+where (R.CLASS_RANK_QUARTILE_CALC <> G.Quartile or R.CLASS_RANK_QUARTILE_CALC is null)
+and G.Quartile is not null
+and R.Entry_Term_Offset <= 0
+
+Update reporting
+Set HS_RANK = G.rank
+--Select R.ENTRY_TERM_OFFSET, R.CLASS_RANK_QUARTILE, G.Quartile,*
+From Reporting R
+Left outer join @gpa G on G.nid = R.Talisma_ID
+where (R.HS_RANK is null)
+and G.rank is not null
+and R.Entry_Term_Offset <= 0
+
+Update reporting
+Set HS_SIZE = G.size
+--Select R.ENTRY_TERM_OFFSET, R.CLASS_RANK_QUARTILE, G.Quartile,*
+From Reporting R
+Left outer join @gpa G on G.nid = R.Talisma_ID
+where (R.HS_SIZE is null)
+and G.size is not null
+and R.Entry_Term_Offset <= 0
+
+Update reporting
+Set HS_GPA_RAW = G.gpa
+--Select R.ENTRY_TERM_OFFSET, R.CLASS_RANK_QUARTILE, G.Quartile,*
+From Reporting R
+Left outer join @gpa G on G.nid = R.Talisma_ID
+where (R.HS_GPA_RAW is null)
+and G.gpa is not null
+and R.Entry_Term_Offset <= 0
+
+Update reporting
+Set HS_GPA_CALC = CASE WHEN G.gpa > 40 THEN (G.gpa-55)/10 WHEN G.gpa <5 THEN G.gpa ELSE NULL END
+--Select R.ENTRY_TERM_OFFSET, R.CLASS_RANK_QUARTILE, G.Quartile,*
+From Reporting R
+Left outer join @gpa G on G.nid = R.Talisma_ID
+where (R.HS_GPA_CALC is null) and 
+G.gpa is not null
+and R.Entry_Term_Offset <= 0
+/* -- Commented out by NP on 1/7/2014 because this field has not been used for two years.
+Update Reporting
+Set ACU_MERIT=NULL
+
+Update Reporting
+Set ACU_MERIT= CASE 
+	WHEN SAT_TO_ACT_EQUIV <= 21 AND CLASS_RANK_QUARTILE_CALC = '1a - Top 10%' THEN 3500
+	WHEN SAT_TO_ACT_EQUIV <= 21 AND CLASS_RANK_QUARTILE_CALC = '1b - 1st Quarter' THEN 3000
+	WHEN SAT_TO_ACT_EQUIV <= 21 AND CLASS_RANK_QUARTILE_CALC = '2 - 2nd Quarter' THEN 1500
+	WHEN SAT_TO_ACT_EQUIV <= 21 THEN 0
+	WHEN SAT_TO_ACT_EQUIV between 22 and 23 AND CLASS_RANK_QUARTILE_CALC = '1a - Top 10%' THEN 6500
+	WHEN SAT_TO_ACT_EQUIV between 22 and 23 AND CLASS_RANK_QUARTILE_CALC = '1b - 1st Quarter' THEN 6000
+	WHEN SAT_TO_ACT_EQUIV between 22 and 23 AND CLASS_RANK_QUARTILE_CALC = '2 - 2nd Quarter' THEN 4500
+	WHEN SAT_TO_ACT_EQUIV between 22 and 23 THEN 3000
+	WHEN SAT_TO_ACT_EQUIV between 24 and 27 AND CLASS_RANK_QUARTILE_CALC = '1a - Top 10%' THEN 9000
+	WHEN SAT_TO_ACT_EQUIV between 24 and 27 AND CLASS_RANK_QUARTILE_CALC = '1b - 1st Quarter' THEN 8000
+	WHEN SAT_TO_ACT_EQUIV between 24 and 27 AND CLASS_RANK_QUARTILE_CALC = '2 - 2nd Quarter' THEN 7000
+	WHEN SAT_TO_ACT_EQUIV between 24 and 27 THEN 6500
+	WHEN SAT_TO_ACT_EQUIV between 28 and 29 AND CLASS_RANK_QUARTILE_CALC = '1a - Top 10%' THEN 10000
+	WHEN SAT_TO_ACT_EQUIV between 28 and 29 AND CLASS_RANK_QUARTILE_CALC = '1b - 1st Quarter' THEN 9000
+	WHEN SAT_TO_ACT_EQUIV between 28 and 29 AND CLASS_RANK_QUARTILE_CALC = '2 - 2nd Quarter' THEN 8000
+	WHEN SAT_TO_ACT_EQUIV between 28 and 29 THEN 7500
+	WHEN SAT_TO_ACT_EQUIV between 30 and 31 AND CLASS_RANK_QUARTILE_CALC = '1a - Top 10%' THEN 11000
+	WHEN SAT_TO_ACT_EQUIV between 30 and 31 AND CLASS_RANK_QUARTILE_CALC = '1b - 1st Quarter' THEN 10000
+	WHEN SAT_TO_ACT_EQUIV between 30 and 31 AND CLASS_RANK_QUARTILE_CALC = '2 - 2nd Quarter' THEN 9000
+	WHEN SAT_TO_ACT_EQUIV between 30 and 31 THEN 8500
+	WHEN SAT_TO_ACT_EQUIV between 32 and 36 AND CLASS_RANK_QUARTILE_CALC = '1a - Top 10%' THEN 12500
+	WHEN SAT_TO_ACT_EQUIV between 32 and 36 AND CLASS_RANK_QUARTILE_CALC = '1b - 1st Quarter' THEN 11500
+	WHEN SAT_TO_ACT_EQUIV between 32 and 36 AND CLASS_RANK_QUARTILE_CALC = '2 - 2nd Quarter' THEN 10500
+	WHEN SAT_TO_ACT_EQUIV between 32 and 36 THEN 10000
+	END
+FROM reporting
+Where ENTRY_TERM_OFFSET in (0, -.5) and APP_TYPE = 'N'
+*/
+/*
+--Troubleshooting code for NL Score calculation
+Select SS.ACT, R.ACT, SS.SAT, R.SAT, SS.SUPER, HS_SIZE, HS_RANK, CLASS_RANK_QUARTILE, CLASS_RANK_QUARTILE_CALC
+,CASE WHEN R.CLASS_RANK_QUARTILE is not null and R.CLASS_RANK_QUARTILE<>'Unknown' and HS_SIZE>0--  and HS_RANK>0
+	THEN
+ (1-(cast(HS_RANK as float)/cast(HS_SIZE as float)))*100
+ ELSE CASE CLASS_RANK_QUARTILE_CALC WHEN '1a - Top 10%' THEN 90
+ WHEN '1b - 1st Quarter' THEN 75 WHEN '2 - 2nd Quarter' THEN 50
+ WHEN '3 - 3rd Quarter' THEN 25 ELSE 0 END END
+ ,CASE WHEN SS.ACT*2.7778 IS NULL THEN SS.SAT*.0625
+ WHEN SS.SAT*.0625 IS NULL THEN SS.ACT*2.7778
+ WHEN  SS.ACT*2.7778<SS.SAT*.0625 THEN SS.SAT*.0625
+ ELSE SS.ACT*2.7778 END
+
+, NL_SCORE, B.STU_TYPE from Reporting R
+left outer join ACU_Reporting_SuperScores SS on SS.nID = R.TALISMA_ID
+Inner Join ACU_ANALYTICS_Base B on B.nID=R.TALISMA_ID and B.TERM_CODE=R.TERM_CODE
+Where ENTRY_TERM_OFFSET=0
+and APP_TYPE='N'
+and NL_SCORE is null
+and ADMIT_DATE is not null
+*/
+
+Update reporting
+Set NL_Score=
+--Select
+CASE WHEN SS.ACT*2.7778 IS NULL THEN SS.SAT*.0625
+ WHEN SS.SAT*.0625 IS NULL THEN SS.ACT*2.7778
+ WHEN  SS.ACT*2.7778<SS.SAT*.0625 THEN SS.SAT*.0625
+ ELSE SS.ACT*2.7778 END +
+ CASE WHEN R.CLASS_RANK_QUARTILE is not null and R.CLASS_RANK_QUARTILE<>'Unknown' and HS_SIZE>0--  and HS_RANK>0
+	THEN
+ (1-(cast(HS_RANK as float)/cast(HS_SIZE as float)))*100
+ ELSE CASE CLASS_RANK_QUARTILE_CALC WHEN '1a - Top 10%' THEN 90
+ WHEN '1b - 1st Quarter' THEN 75 WHEN '2 - 2nd Quarter' THEN 50
+ WHEN '3 - 3rd Quarter' THEN 25 ELSE 0 END END 
+From ACU_ANALYTICS_Base B
+Inner Join reporting R oN R.TALISMA_ID = B.nID and R.TERM_CODE = B.TERM_CODE
+Inner Join ACU_Reporting_SuperScores SS on SS.nID = B.nID
+Where B.STU_TYPE in ('F', 'IF', 'T', 'IT')
+--and R.ADMIT_DATE is not null
+and CASE WHEN SS.ACT*2.7778 IS NULL THEN SS.SAT*.0625
+ WHEN SS.SAT*.0625 IS NULL THEN SS.ACT*2.7778
+ WHEN  SS.ACT*2.7778<SS.SAT*.0625 THEN SS.SAT*.0625
+ ELSE SS.ACT*2.7778 END<=100.0008
+ 
+ and  CASE WHEN R.CLASS_RANK_QUARTILE is not null and R.CLASS_RANK_QUARTILE<>'Unknown' and HS_SIZE>0 THEN
+ (1-(cast(HS_RANK as float)/cast(HS_SIZE as float)))*100
+ ELSE CASE CLASS_RANK_QUARTILE_CALC WHEN '1a - Top 10%' THEN 90
+ WHEN '1b - 1st Quarter' THEN 75 WHEN '2 - 2nd Quarter' THEN 50
+ WHEN '3 - 3rd Quarter' THEN 25 ELSE 0 END END <=100
+
+ and CLASS_RANK_QUARTILE_CALC is not null
+ 
+Update Reporting
+Set NL_SCORE= CASE WHEN NL_SCORE between 130 and 158 
+					and SAT_TO_ACT_EQUIV>26 
+					and HS_GPA_CORE>3.5 
+					and CLASS_RANK_QUARTILE = 'Unknown' 
+				THEN 158.01
+				WHEN NL_SCORE between 100 and 130 
+					and SAT_TO_ACT_EQUIV>23 
+					and HS_GPA_CORE>3.2 
+					and CLASS_RANK_QUARTILE = 'Unknown' 
+				THEN 130.01
+				ELSE NL_SCORE
+				END
+				
+--Individual exceptions to merit awards
+Update Reporting 
+  Set NL_Score=130.01
+  --Select R.NL_SCORE
+  From reporting R
+  where BANNER_ID in (487589, 489313)
+  
+Update Reporting 
+  Set NL_Score=158.01
+  --Select R.NL_SCORE
+  From reporting R
+  where BANNER_ID in (483207)
+  
+Update Reporting 
+  Set NL_Score=100.01
+  --Select R.NL_SCORE
+  From reporting R
+  where BANNER_ID in (477652)  
+
+--Select * from reporting where BANNER_ID = 477652
+
+Update reporting
+Set NL_MERIT=NULL
+WHERE NL_SCORE IS NULL
+and NL_MERIT iS NOT NULL
+
+/* --pull mismatched scholarship values
+Select NL_SCORE, NL_MERIT, *
+ from reporting 
+ where ((NL_SCORE >=175 and NL_MERIT <> 14000)
+OR (NL_SCORE between 158 and 175 and NL_MERIT<> 12000)
+OR (NL_SCORE between 143 and 158 and NL_MERIT<> 10000)
+OR (NL_SCORE between 130 and 143 and NL_MERIT<> 9000)
+OR (NL_SCORE between 100 and 130 and NL_MERIT<> 6500)
+OR (NL_SCORE<100 and NL_MERIT<> 3000))
+and ENTRY_TERM_OFFSET=0
+and APP_TYPE='N'
+and NL_MERIT<>14725
+*/
+
+Update reporting
+Set NL_MERIT=CASE WHEN C14.FldNumeric23736=1 AND APP_TYPE='N' THEN 14725
+WHEN NL_SCORE >=175 THEN 14000
+WHEN NL_SCORE between 158 and 175 THEN 12000
+WHEN NL_SCORE between 130 and 158 and SAT_TO_ACT_EQUIV>26 and HS_GPA_CORE>3.5 and R.CLASS_RANK_QUARTILE = 'Unknown' THEN 12000
+WHEN NL_SCORE between 143 and 158 THEN 10000
+WHEN NL_SCORE between 130 and 143 THEN 9000
+WHEN NL_SCORE between 100 and 130 and SAT_TO_ACT_EQUIV>23 and HS_GPA_CORE>3.2 and R.CLASS_RANK_QUARTILE = 'Unknown' THEN 9000
+WHEN NL_SCORE between 100 and 130 THEN 6500
+ELSE 3000 END
+From reporting R
+Inner Join ACU_EntryTerm ET on ET.TermCode=R.TERM_CODE
+Inner Join tlAnalytics..tblObjectType3_14 C14 on C14.nID = R.TALISMA_ID
+WHERE NL_SCORE IS NOT NULL
+and ((APP_TYPE='N' and ENTRY_TERM_OFFSET in (0, -.5))
+		--OR (ENTRY_TERM_OFFSET in (-.5) and APP_TYPE='T' and '09-20-'+Cast(HS_GradYear as nvarchar) between ET.StartDate-365 and ET.StartDate)
+		)
+and (NL_MERIT<>CASE WHEN C14.FldNumeric23736=1 AND APP_TYPE='N' THEN 14725
+				WHEN NL_SCORE >=175 THEN 14000
+				WHEN NL_SCORE between 158 and 175 THEN 12000
+				WHEN NL_SCORE between 130 and 158 and SAT_TO_ACT_EQUIV>26 and HS_GPA_CORE>3.5 and R.CLASS_RANK_QUARTILE = 'Unknown' THEN 12000
+				WHEN NL_SCORE between 143 and 158 THEN 10000
+				WHEN NL_SCORE between 130 and 143 THEN 9000
+				WHEN NL_SCORE between 100 and 130 and SAT_TO_ACT_EQUIV>23 and HS_GPA_CORE>3.2 and R.CLASS_RANK_QUARTILE = 'Unknown' THEN 9000
+				WHEN NL_SCORE between 100 and 130 THEN 6500
+				ELSE 3000 END OR NL_MERIT iS NULL)
+
+Update reporting
+Set NL_MERIT=CASE WHEN NL_SCORE >=175 THEN 14000
+WHEN NL_SCORE between 158 and 175 THEN 12000
+WHEN NL_SCORE between 130 and 158 THEN 9000
+WHEN NL_SCORE between 100 and 130 THEN 6500
+ELSE 3000 END
+From reporting R
+Inner Join ACU_EntryTerm ET on ET.TermCode=R.TERM_CODE
+WHERE NL_SCORE IS NOT NULL
+and ((ENTRY_TERM_OFFSET in (0, -.5) and APP_TYPE='T' and '09-20-'+Cast(HS_GradYear as nvarchar) between ET.StartDate-365 and ET.StartDate))
+and (NL_MERIT<>CASE WHEN NL_SCORE >=175 THEN 14000
+	WHEN NL_SCORE between 158 and 175 THEN 12000
+	WHEN NL_SCORE between 130 and 158 THEN 9000
+	WHEN NL_SCORE between 100 and 130 THEN 6500
+	ELSE 3000 END OR NL_MERIT iS NULL)
+--Select TRANSFER_CLASSIFICATION,* from reporting where TRANSFER_CLASSIFICATION is not null
+
+--Set International Freshmen to baseline award if no ACT/SAT is on file and student is admitted
+Update reporting
+Set NL_MERIT=CASE WHEN MARKET_SEGMENT='INT' and SAT_TO_ACT_EQUIV IS NULL and ADMIT_DATE IS NOT NULL 
+						THEN 3000 ELSE NL_MERIT END
+						From reporting
+WHERE  ENTRY_TERM_OFFSET in (0) 
+and APP_TYPE='N'
+AND (NL_MERIT IS NULL OR NL_MERIT=0 )
+AND  CASE WHEN MARKET_SEGMENT='INT' and SAT_TO_ACT_EQUIV IS NULL and ADMIT_DATE IS NOT NULL 
+						THEN 3000 ELSE NL_MERIT END IS NOT NULL
+		
+UPDATE REPORTING 
+SET MERIT_AWARD_AMT=NL_MERIT
+WHEre ISNULL(MERIT_AWARD_AMT, 1)<>ISNULL(NL_MERIT, 1)
+and NL_MERIT is not null
+
+UPDATE REPORTING 
+SET MERIT_AWARD_AMT=L.High
+FROM reporting R
+Inner Join (
+			Select distinct(nID) nID--,R.ADMIT_DATE
+			, R.NL_MERIT, MAX(cast(REPLACE(REPLACE(CurAmt, '$', ''), ',', '') as int)) High, MIN(cast(REPLACE(REPLACE(NewAmt, '$', ''), ',', '') as int)) Low
+			from TALSQL.tlMain.DBO.ACU_MeritAwardChangeLog L
+			Inner Join reporting R on R.TALISMA_ID=L.nID and R.ENTRY_TERM_OFFSET=0
+			where cast(REPLACE(REPLACE(NewAmt, '$', ''), ',', '') as int)<cast(REPLACE(REPLACE(CurAmt, '$', ''), ',', '') as int)
+			and L.dt>=R.ADMIT_DATE
+			--and R.ISIR_DATE IS NOT NULL
+			Group by nID, R.NL_MERIT
+			HAVING MAX(cast(REPLACE(REPLACE(CurAmt, '$', ''), ',', '') as int))>R.NL_MERIT
+			and MAX(cast(REPLACE(REPLACE(CurAmt, '$', ''), ',', '') as int)) in (6500, 9000, 12000, 14000)
+	) L on L.nID = R.TALISMA_ID
+Where R.ENTRY_TERM_OFFSET=0
+
+Update Reporting 
+Set FirstYearTransferFlag=CASE WHEN APP_TYPE='T' and HS_GradYear between DATEPART(YY, ET.StartDate)-1 and DATEPART(YY, ET.StartDate) THEN 1
+				WHEN APP_TYPE='T' THEN 0
+				ELSE NULL END
+From reporting R
+Inner Join ACU_EntryTerm ET on ET.TermCode=R.TERM_CODE
+
+Update Reporting
+Set MERIT_AWARD_NAME= 
+CASE WHEN (ENTRY_TERM_OFFSET in (-.5) and APP_TYPE='T' and HS_GradYear between DATEPART(YY, GETDATE())-1 and DATEPART(YY, GETDATE())) THEN
+		CASE WHEN MERIT_AWARD_AMT = 14000 THEN 'Transfer Royce L. Money Chancellor''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 12000 THEN 'Transfer John C. Stevens Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 10000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 9000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 6500 THEN 'Transfer Dean''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 3000 THEN 'Transfer University Award'
+		Else NULL
+		END
+	WHEN (ENTRY_TERM_OFFSET in (0) and APP_TYPE='T' and HS_GradYear between DATEPART(YY, GETDATE())-1 and DATEPART(YY, GETDATE())) THEN
+		CASE WHEN MERIT_AWARD_AMT = 14000 THEN 'Transfer Royce L. Money Chancellor''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 12000 THEN 'Transfer John C. Stevens Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 10000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 9000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 6500 THEN 'Transfer Dean''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 3000 THEN 'Transfer University Award'
+		Else NULL
+		END
+	WHEN ENTRY_TERM_OFFSET in (0, -.5) and APP_TYPE='N' THEN
+		CASE WHEN MERIT_AWARD_AMT = 14725 THEN 'Presidential Scholarship'
+		WHEN MERIT_AWARD_AMT = 14000 THEN 'Royce L. Money Chancellor''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 12000 THEN 'John C. Stevens Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 10000 THEN 'A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 9000 THEN 'A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 6500 THEN 'Dean''s Award for Academic Excellence'
+		Else 'University Award'
+		END
+	ELSE NULL
+	END
+FROM reporting
+Where (MERIT_AWARD_NAME<>
+	CASE WHEN (ENTRY_TERM_OFFSET in (-.5) and APP_TYPE='T' and HS_GradYear between DATEPART(YY, GETDATE())-1 and DATEPART(YY, GETDATE())) THEN
+		CASE WHEN MERIT_AWARD_AMT = 14000 THEN 'Transfer Royce L. Money Chancellor''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 12000 THEN 'Transfer John C. Stevens Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 10000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 9000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 6500 THEN 'Transfer Dean''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 3000 THEN 'Transfer University Award'
+		Else NULL
+		END
+	WHEN (ENTRY_TERM_OFFSET in (0) and APP_TYPE='T' and HS_GradYear between DATEPART(YY, GETDATE())-1 and DATEPART(YY, GETDATE())) THEN
+		CASE WHEN MERIT_AWARD_AMT = 14000 THEN 'Transfer Royce L. Money Chancellor''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 12000 THEN 'Transfer John C. Stevens Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 10000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 9000 THEN 'Transfer A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 6500 THEN 'Transfer Dean''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 3000 THEN 'Transfer University Award'
+		Else NULL
+		END
+	WHEN ENTRY_TERM_OFFSET in (0, -.5) and APP_TYPE='N' THEN
+		CASE WHEN MERIT_AWARD_AMT = 14725 THEN 'Presidential Scholarship'
+		WHEN MERIT_AWARD_AMT = 14000 THEN 'Royce L. Money Chancellor''s Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 12000 THEN 'John C. Stevens Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 10000 THEN 'A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 9000 THEN 'A.B. Barret Award for Academic Excellence'
+		WHEN MERIT_AWARD_AMT = 6500 THEN 'Dean''s Award for Academic Excellence'
+		Else 'University Award'
+		END
+	ELSE NULL
+	END OR MERIT_AWARD_NAME IS NULL)
+
+--Set Transfer Merit Amount
+Update reporting
+Set MERIT_AWARD_AMT= CASE WHEN C4.[FldFloat21964] between 3.5 and 4.0 THEN 8000
+	WHEN C4.[FldFloat21964] between 3.0 and 3.5 THEN 6000
+	WHEN C4.[FldFloat21964] between 2.5 and 3.0 THEN 4000
+	WHEN C4.[FldFloat21964] <2.5 THEN 0
+	ELSE NULL END, MERIT_AWARD_NAME='Transfer Merit Scholarship'
+--Select [FldFloat21964], *
+FROM Reporting R
+Inner Join tlAnalytics..tblCustomer C on C.aCustID= R.TALISMA_ID
+Inner Join tlAnalytics..tblObjectType3_4 C4 on C4.nID = C.aCustID
+WHere C4.[FldFloat21964] is not null --has a cumulative transfer GPA
+and R.APP_TYPE='T'
+and ((HS_GradYear < DATEPART(YY, GETDATE())-1 OR HS_GradYear IS NULL)
+	OR 
+	MERIT_AWARD_AMT IS NULL)
+and R.ENTRY_TERM_OFFSET<=0
+and (MERIT_AWARD_AMT<>CASE WHEN C4.[FldFloat21964] between 3.5 and 4.0 THEN 8000
+	WHEN C4.[FldFloat21964] between 3.0 and 3.5 THEN 6000
+	WHEN C4.[FldFloat21964] between 2.5 and 3.0 THEN 4000
+	WHEN C4.[FldFloat21964] <2.5 THEN 0
+	ELSE NULL END 
+	OR MERIT_AWARD_AMT IS NULL)
+
+Update reporting
+Set FM_EFC = Null
+Where ISIR_DATE is null
+and FM_EFC = 0
+
+
+Update reporting
+Set FM_EFC_BAND = CASE WHEN FM_EFC=0 THEN '1 || 0'
+	WHEN FM_EFC<5000 THEN '2 || 1-5k'
+	WHEN FM_EFC<10000 THEN '3 || 5k-9k'
+	WHEN FM_EFC<15000 THEN '4 || 10k-14k'
+	WHEN FM_EFC<20000 THEN '5 || 15k-19k'
+	WHEN FM_EFC<25000 THEN '6 || 20k-24k'
+	WHEN FM_EFC<30000 THEN '7 || 25k-29k'
+	WHEN FM_EFC>=30000 THEN '8 || 30k+'
+	ELSE NULL END
+	
+--Change non-numeric CEEB's to Numeric equivalents
+Update Reporting Set FAFSA_COMPET1='003537' Where FAFSA_COMPET1='ACU'
+Update Reporting Set FAFSA_COMPET1='005332' Where FAFSA_COMPET1='E00473'
+Update Reporting Set FAFSA_COMPET1='003442' Where FAFSA_COMPET1='E00468'
+Update Reporting Set FAFSA_COMPET1='004133' Where FAFSA_COMPET1='E01123'
+Update Reporting Set FAFSA_COMPET1='006880' Where FAFSA_COMPET1='G06682'
+Update Reporting Set FAFSA_COMPET1='002277' Where FAFSA_COMPET1='G03269'
+Update Reporting Set FAFSA_COMPET1='000922' Where FAFSA_COMPET1='G11683'
+Update Reporting Set FAFSA_COMPET1='000823' where FAFSA_COMPET1='G10594'
+Update Reporting Set FAFSA_COMPET1='006285' where FAFSA_COMPET1='E00935'
+Update Reporting Set FAFSA_COMPET1='003137' where FAFSA_COMPET1='E00967'
+Update Reporting Set FAFSA_COMPET1='000866' where FAFSA_COMPET1='G07881'
+Update Reporting Set FAFSA_COMPET1='001456' where FAFSA_COMPET1='G02254'
+Update Reporting Set FAFSA_COMPET2='003537' Where FAFSA_COMPET2='ACU'
+Update Reporting Set FAFSA_COMPET2='005332' Where FAFSA_COMPET2='E00473'
+Update Reporting Set FAFSA_COMPET2='003442' Where FAFSA_COMPET2='E00468'
+Update Reporting Set FAFSA_COMPET2='004133' Where FAFSA_COMPET2='E01123'
+Update Reporting Set FAFSA_COMPET2='006880' Where FAFSA_COMPET2='G06682'
+Update Reporting Set FAFSA_COMPET2='002277' Where FAFSA_COMPET2='G03269'
+Update Reporting Set FAFSA_COMPET2='000922' Where FAFSA_COMPET2='G11683'
+Update Reporting Set FAFSA_COMPET2='000823' where FAFSA_COMPET2='G10594'
+Update Reporting Set FAFSA_COMPET2='006285' where FAFSA_COMPET2='E00935'
+Update Reporting Set FAFSA_COMPET2='003137' where FAFSA_COMPET2='E00967'
+Update Reporting Set FAFSA_COMPET2='000866' where FAFSA_COMPET2='G07881'
+Update Reporting Set FAFSA_COMPET2='001456' where FAFSA_COMPET2='G02254'
+Update Reporting Set FAFSA_COMPET3='003537' Where FAFSA_COMPET3='ACU'
+Update Reporting Set FAFSA_COMPET3='005332' Where FAFSA_COMPET3='E00473'
+Update Reporting Set FAFSA_COMPET3='003442' Where FAFSA_COMPET3='E00468'
+Update Reporting Set FAFSA_COMPET3='004133' Where FAFSA_COMPET3='E01123'
+Update Reporting Set FAFSA_COMPET3='006880' Where FAFSA_COMPET3='G06682'
+Update Reporting Set FAFSA_COMPET3='002277' Where FAFSA_COMPET3='G03269'
+Update Reporting Set FAFSA_COMPET3='000922' Where FAFSA_COMPET3='G11683'
+Update Reporting Set FAFSA_COMPET3='000823' where FAFSA_COMPET3='G10594'
+Update Reporting Set FAFSA_COMPET3='006285' where FAFSA_COMPET3='E00935'
+Update Reporting Set FAFSA_COMPET3='003137' where FAFSA_COMPET3='E00967'
+Update Reporting Set FAFSA_COMPET3='000866' where FAFSA_COMPET3='G07881'
+Update Reporting Set FAFSA_COMPET3='001456' where FAFSA_COMPET3='G02254'
+
+
+--Clear out non-numeric CEEBS
+Update Reporting Set FAFSA_COMPET1=NULL where ISNUMERIC(FAFSA_COMPET1)<>1 and FAFSA_COMPET1 IS NOT NULL
+Update Reporting Set FAFSA_COMPET2=NULL where ISNUMERIC(FAFSA_COMPET2)<>1 and FAFSA_COMPET2 IS NOT NULL
+Update Reporting Set FAFSA_COMPET3=NULL where ISNUMERIC(FAFSA_COMPET3)<>1 and FAFSA_COMPET3 IS NOT NULL
+
+--Troubleshoot Errors
+--(Select * from Reporting where ISNUMERIC(FAFSA_COMPET1)<>1 and FAFSA_COMPET1 is not null)
+
+--Update FAFSA Competitors
+Update reporting
+Set FAFSA_COMPET1_NAME = left(I.InstitutionName, 50)
+FROM reporting R
+Inner Join (Select * from Reporting where ISNUMERIC(FAFSA_COMPET1)=1) R1 on R1.ID=R.ID
+Inner Join (Select * from ACU_Reporting_Institutions where ISNUMERIC(FiceCode)=1) I on I.FiceCode = cast(R.FAFSA_COMPET1 as INT)
+where (R.FAFSA_COMPET1_NAME <> left(I.InstitutionName, 50)
+	OR R.FAFSA_COMPET1_NAME IS NULL)
+	AND R.ENTRY_TERM_OFFSET<=0
+	
+Update reporting
+Set FAFSA_COMPET2_NAME = left(I.InstitutionName, 50)
+FROM reporting R
+Inner Join (Select * from Reporting where ISNUMERIC(FAFSA_COMPET2)=1) R1 on R1.ID=R.ID
+Inner Join (Select * from ACU_Reporting_Institutions where ISNUMERIC(FiceCode)=1) I on I.FiceCode = cast(R.FAFSA_COMPET2 as INT)
+where (R.FAFSA_COMPET2_NAME <> left(I.InstitutionName, 50)
+	OR R.FAFSA_COMPET2_NAME IS NULL)
+	AND R.ENTRY_TERM_OFFSET<=0
+	
+Update reporting
+Set FAFSA_COMPET3_NAME = left(I.InstitutionName, 50)
+FROM reporting R
+Inner Join (Select * from Reporting where ISNUMERIC(FAFSA_COMPET3)=1) R1 on R1.ID=R.ID
+Inner Join ACU_Reporting_Institutions I on I.FiceCode = cast(R.FAFSA_COMPET3 as INT)
+where R.FAFSA_COMPET3 not like 'E%' and
+(R.FAFSA_COMPET3_NAME <> left(I.InstitutionName, 50)
+	OR R.FAFSA_COMPET3_NAME IS NULL)
+	AND R.ENTRY_TERM_OFFSET<=0
+	
+Update Reporting 
+Set FAFSA_COMPET_Primary = 
+CASE WHEN FAFSA_COMPET1='003537' AND FAFSA_COMPET2 IS NULL THEN FAFSA_COMPET1
+	WHEN FAFSA_COMPET2='003537' AND FAFSA_COMPET1 IS NULL THEN FAFSA_COMPET2
+	WHEN FAFSA_COMPET1='003537' THEN FAFSA_COMPET2
+	ELSE FAFSA_COMPET1
+	END
+	
+	
+--College GPA
+Update Reporting
+Set COLLEGE_GPA = Coalesce(C4.[FldFloat21964], left(GPA.GPA, 5))
+--Select C4.[FldFloat21964], R.College_GPA, Entry_Term_Offset, GPA.*, R.*
+from Reporting R
+left outer Join (
+Select nID, SUM([FldNumeric_22417]) as Hours
+, SUM([FldString_22418]*cast([FldNumeric_22417] as float)) as GPAHrs
+, SUM([FldString_22418]*cast([FldNumeric_22417] as float))/SUM([FldNumeric_22417]) as GPA
+From tlAnalytics..tblContact_11186
+where 
+ISNUMERIC([FldString_22418])=1
+and [FldNumeric_22417] >0
+Group by nID
+HAVING  SUM([FldString_22418]*cast([FldNumeric_22417] as float))/SUM([FldNumeric_22417]) between 0 and 4
+) GPA on GPA.nID = R.TALISMA_ID
+Left outer join tlAnalytics..tblObjectType3_4 C4 on C4.nID = R.Talisma_ID and C4.[FldFloat21964]>0 and R.ENTRY_TERM_OFFSET<=0
+Where (COLLEGE_GPA IS NOT NULL
+OR GPA.GPA IS NOT NULL
+OR C4.[FldFloat21964] IS NOT NULL
+) and C4.[FldFloat21964] is not null
+AND R.ENTRY_TERM_OFFSET<=0
+
+Update Reporting
+Set TRANSFER_FRESHMAN_FUNNEL_STATUS= CASE WHEN COALESCE(F.nID, F1.Banner_ID, F2.SSN) IS NOT NULL THEN COALESCE(F.FunnelStatus, F1.FunnelStatus, F2.FunnelStatus) ELSE 'NotApplied' END
+From reporting R
+Inner Join ACU_ANALYTICS_BASE B on B.nID=R.TALISMA_ID and B.TERM_CODE=R.TERM_CODE
+left outer join (Select nID, CASE 	WHEN R.ENROLL_STATUS IS NOT NULL THEN R.ENROLL_STATUS
+									WHEN FD.INQ IS NOT NULL THEN 'Inquiry'
+									WHEN FD.PSP IS NOT NULL THEN 'Prospect'
+									ELSE 'Suspect' END FunnelStatus
+				, APP_DATE, COMP_APP_DATE, DENY_DATE, DEFER_DATE, ADMIT_DATE, DEPOSIT_DATE, CANCEL_DATE 
+				from  ACU_ANALYTICS_BASE B
+				Inner Join ACU_ANALYTICS_DemGen DG on DG.cID=B.aID
+				Inner Join ACU_ANALYTICS_FlagDates FD on FD.cID=B.aID
+				Left Outer Join Reporting R on B.nID=R.TALISMA_ID and B.TERM_CODE=R.TERM_CODE
+				where B.STU_TYPE='F') F on F.nID=R.TALISMA_ID
+left outer join (Select R.BANNER_ID, CASE 	WHEN R.ENROLL_STATUS IS NOT NULL THEN R.ENROLL_STATUS
+									WHEN FD.INQ IS NOT NULL THEN 'Inquiry'
+									WHEN FD.PSP IS NOT NULL THEN 'Prospect'
+									ELSE 'Suspect' END FunnelStatus
+				, APP_DATE, COMP_APP_DATE, DENY_DATE, DEFER_DATE, ADMIT_DATE, DEPOSIT_DATE, CANCEL_DATE 
+				from  ACU_ANALYTICS_BASE B
+				Inner Join ACU_ANALYTICS_DemGen DG on DG.cID=B.aID
+				Inner Join ACU_ANALYTICS_FlagDates FD on FD.cID=B.aID
+				Left Outer Join Reporting R on B.nID=R.TALISMA_ID and B.TERM_CODE=R.TERM_CODE
+				where B.STU_TYPE='F' and R.BANNER_ID IS NOT NULL) F1 on F1.BANNER_ID=R.BANNER_ID
+left outer join (Select R.SSN, CASE 	WHEN R.ENROLL_STATUS IS NOT NULL THEN R.ENROLL_STATUS
+									WHEN FD.INQ IS NOT NULL THEN 'Inquiry'
+									WHEN FD.PSP IS NOT NULL THEN 'Prospect'
+									ELSE 'Suspect' END FunnelStatus
+				, APP_DATE, COMP_APP_DATE, DENY_DATE, DEFER_DATE, ADMIT_DATE, DEPOSIT_DATE, CANCEL_DATE 
+				from  ACU_ANALYTICS_BASE B
+				Inner Join ACU_ANALYTICS_DemGen DG on DG.cID=B.aID
+				Inner Join ACU_ANALYTICS_FlagDates FD on FD.cID=B.aID
+				Left Outer Join Reporting R on B.nID=R.TALISMA_ID and B.TERM_CODE=R.TERM_CODE
+				where B.STU_TYPE='F' and R.SSN IS NOT NULL) F2 on F2.SSN=R.SSN
+Where B.STU_TYPE='T'
+
+
+--College Transfer Hours and Standing
+Update reporting
+Set COLLEGE_TRANSFER_HRS=H.Hrs
+, COLLEGE_TRANSFER_STANDING = CASE WHEN H.Hrs<30 THEN 'Freshman' WHEN H.Hrs<60 THEN 'Sophomore' WHEN H.Hrs<120 THEN 'Junior' ELSE 'Senior' END
+--Select H.*, R.*
+FROM reporting R
+Inner Join (Select R.TALISMA_ID, AVG(COALESCE([FldNumeric23264], AC.Cred, CC.Cred)) Hrs, MAX(AC.Earned) Earned
+			FROM 
+			Reporting R
+			left outer Join tlAnalytics..tblObjectType20002_1 A1 on R.TALISMA_ID=A1.[FldNumeric4402011]
+			left outer join tlAnalytics..tblObjectType20002_4 A4 on A1.nID=A4.nID
+			left outer join (Select nID, NULLIF(ISNULL(SUM([FldNumeric_23224]), 0)+ ISNULL(SUM([FldNumeric_23328]), 0), 0) Cred
+								, NULLIF(SUM(ISNULL([FldNumeric_23224], 0)), 0) Earned
+							From  tlAnalytics..[tblObjectType20002_5010003]
+							Where [nSchoolType]=2
+							Group by nID) AC on AC.nID=A1.nID
+			left outer join (Select nID, SUM([FldNumeric_22417]) Cred 
+							from tlAnalytics..[tblContact_11186]
+							Group by nID) CC on CC.nID=R.TALISMA_ID
+			Where COALESCE([FldNumeric23264], AC.Cred, CC.Cred) >0
+			Group by R.TALISMA_ID) H on H.TALISMA_ID=R.TALISMA_ID
+Where R.ENTRY_TERM_OFFSET<=0 
+	/*
+	AND (COLLEGE_TRANSFER_HRS<>H.Hrs
+	OR (COLLEGE_TRANSFER_HRS IS NULL AND H.Hrs IS NOT NULL)
+	OR COLLEGE_TRANSFER_STANDING<>CASE WHEN H.Hrs<30 THEN 'Freshman' WHEN H.Hrs<60 THEN 'Sophomore' WHEN H.Hrs<120 THEN 'Junior' ELSE 'Senior' END
+	OR (COLLEGE_TRANSFER_STANDING IS NULL AND H.Hrs IS NOT NULL))	
+	*/
+
+Update reporting
+Set COLLEGE_EARNED_HRS=H.Earned
+--Select H.*, R.*
+FROM reporting R
+Inner Join (Select R.TALISMA_ID, AVG(COALESCE([FldNumeric23264], AC.Cred, CC.Cred)) Hrs, MAX(AC.Earned) Earned
+			FROM 
+			Reporting R
+			left outer Join tlAnalytics..tblObjectType20002_1 A1 on R.TALISMA_ID=A1.[FldNumeric4402011]
+			left outer join tlAnalytics..tblObjectType20002_4 A4 on A1.nID=A4.nID
+			left outer join (Select nID, NULLIF(ISNULL(SUM([FldNumeric_23224]), 0)+ ISNULL(SUM([FldNumeric_23328]), 0), 0) Cred
+								, NULLIF(SUM(ISNULL([FldNumeric_23224], 0)), 0) Earned
+							From tlAnalytics..[tblObjectType20002_5010003]
+							Where [nSchoolType]=2
+							Group by nID) AC on AC.nID=A1.nID
+			left outer join (Select nID, SUM([FldNumeric_22417]) Cred 
+							from tlAnalytics..[tblContact_11186]
+							Group by nID) CC on CC.nID=R.TALISMA_ID
+			Where AC.Earned>0
+			Group by R.TALISMA_ID) H on H.TALISMA_ID=R.TALISMA_ID
+Where (COLLEGE_EARNED_HRS<>H.Earned
+	OR (COLLEGE_EARNED_HRS IS NULL AND H.Earned IS NOT NULL))
+	AND R.ENTRY_TERM_OFFSET<=0
+	
+--Set TRANSFER_CLASSIFICATION
+Update Reporting
+Set TRANSFER_CLASSIFICATION=
+ CASE WHEN COLLEGE_EARNED_HRS<24 THEN 'Less than 24 hours' WHEN COLLEGE_EARNED_HRS>=40 THEN '24 hours or more' ELSE 'Unknown' END
+From reporting R
+where R.APP_TYPE='T'
+and (TRANSFER_CLASSIFICATION<>
+ CASE WHEN COLLEGE_EARNED_HRS<24 THEN 'Less than 24 hours' WHEN COLLEGE_EARNED_HRS>=40 THEN '24 hours or more' ELSE 'Unknown' END
+OR TRANSFER_CLASSIFICATION IS NULL)
+and ENTRY_TERM_OFFSET<=0
+
+
+--TRansefer self reported GPA
+UPdate reporting
+SEt COLLEGE_GPA_SELF_REPORTED=A4.[FldFloat23265]
+--Select A4.[FldFloat23265], *
+From reporting R
+Inner join tlAnalytics..tblObjectType20002_1 A1 on A1.[FldNumeric4402011]=R.TALISMA_ID
+Inner join tlAnalytics..tblObjectType20002_4 A4 on A4.nID=A1.nID
+Where R.ENTRY_TERM_OFFSET<=0 
+AND (COLLEGE_GPA_SELF_REPORTED<>A4.[FldFloat23265]
+OR (COLLEGE_GPA_SELF_REPORTED IS NULL AND A4.[FldFloat23265] is not null))
+AND R.ENTRY_TERM_OFFSET<=0
+
+Update Reporting
+Set COLLEGE_NAME=I.InstitutionName
+, COLLEGE_CONTROL=I.InstitutionControlType
+, COLLEGE_TYPE=I.InstitutionLevel
+From Reporting R
+Inner Join ACU_Reporting_Institutions I on I.CEEBCode=R.COLLEGE_CEEB
+WHERE (COLLEGE_NAME<>I.InstitutionName
+OR (COLLEGE_NAME iS NULL AND I.InstitutionName iS NOT NULL))
+AND R.ENTRY_TERM_OFFSET<=0
+
+
+/********************Update pGPA Fields and Decision Rating***************/
+
+
+Update R
+Set pGPA= coalesce(pGPA_2013.Score, pGPA_2013T.Score, pGPA_2012.Score)
+, pGPA_2012=pGPA_2012.Score
+, pGPA_2013=coalesce(pGPA_2013.Score, pGPA_2013T.Score)
+--Select coalesce(pGPA_2013.Score, pGPA_2013T.Score, pGPA_2012.Score), *
+from reporting R
+Inner join ACU_ANALYTICS_Base B on B.nID = R.TALISMA_ID and B.TERM_CODE=R.TERM_CODE
+left outer join (Select S.cID, S.Score 
+					from ACU_SPSS_ModelScores S 
+					Inner Join  (Select cID, max(sDate) sDate from ACU_SPSS_ModelScores where model='pGPA_2012' Group by cID) SU on SU.cID=S.cID and SU.sDate=S.sDate
+					) pGPA_2012 on pGPA_2012.cID = B.aID
+left outer join (Select S.cID, S.Score 
+					from ACU_SPSS_ModelScores S 
+					Inner Join  (Select cID, max(sDate) sDate from ACU_SPSS_ModelScores where model='pGPA_2013' Group by cID) SU on SU.cID=S.cID and SU.sDate=S.sDate
+					) pGPA_2013 on pGPA_2013.cID = B.aID
+left outer join (Select S.cID, S.Score 
+					from ACU_SPSS_ModelScores S 
+					Inner Join  (Select cID, max(sDate) sDate from ACU_SPSS_ModelScores where model='pGPA_2013T' Group by cID) SU on SU.cID=S.cID and SU.sDate=S.sDate
+					) pGPA_2013T on pGPA_2013T.cID = B.aID
+
+Update Reporting set pGPA_100=NULL, pGPA_Band=NULL, Decision_Rating=NULL
+Update Reporting
+Set pGPA_100=pGPA*25
+, pGPA_BAND=CASE whEN pGPA>3.9 THEN '1 || 3.9+'
+	whEN  pGPA between 3.75 and 3.9 THEN '2 || 3.75'
+	whEN pGPA between 3.5 and 3.75 THEN '3 || 3.5'
+	whEN pGPA between 3.25 and 3.5 THEN '4 || 3.25'
+	whEN  pGPA between 3.0 and 3.25 THEN '5 || 3.0'
+	whEN  pGPA between 2.75 and 3.0 THEN '6 || 2.75'
+	whEN  pGPA between 2.5 and 2.75 THEN '7 || 2.5'
+	whEN  pGPA between 2.25 and 2.5 THEN '8 || 2.25'
+	whEN pGPA < 2.25 THEN '9 || <2.25'
+	END 
+--DECISION RATING 2013
+,Decision_Rating= CASE WHEN R.pGPA_2013>=3.0 and R.SAT_TO_ACT_EQUIV>19 THEN '1'
+	WHEN R.pGPA_2013<2.25 THEN '6'
+	WHEN R.pGPA_2013<3.0 and R.SAT_TO_ACT_EQUIV>26 THEN '3'
+	WHEN R.pGPA_2013<2.5 and R.SAT_TO_ACT_EQUIV<=26 THEN '5'
+	WHEN R.pGPA_2013<2.75 OR R.SAT_TO_ACT_EQUIV<=19 THEN '4'
+	WHEN R.pGPA_2013<3.0 THEN '2'
+	END
+/********** Decision Rating 2012 *****************/  /*
+CASE whEN  pGPA>=3.25 THEN 
+			CASE WHEN S.SAT_TO_ACT_EQUIV>17 THEN 1
+				WHEN S.SAT_TO_ACT_EQUIV>14 THEN 4
+				WHEN S.SAT_TO_ACT_EQUIV IS NULL THEN 7
+				ELSE 6 END
+	whEN  pGPA >=3.0 THEN 
+			CASE WHEN S.SAT_TO_ACT_EQUIV>19 THEN 1
+				WHEN S.SAT_TO_ACT_EQUIV>16 THEN 4
+				WHEN S.SAT_TO_ACT_EQUIV>14 THEN 5
+				WHEN S.SAT_TO_ACT_EQUIV IS NULL THEN 7
+				ELSE 6 END
+	whEN  pGPA >=2.75 THEN 
+			CASE WHEN S.SAT_TO_ACT_EQUIV>25 THEN 3
+				WHEN S.SAT_TO_ACT_EQUIV>19 THEN 2
+				WHEN S.SAT_TO_ACT_EQUIV>18 THEN 4
+				WHEN S.SAT_TO_ACT_EQUIV>15 THEN 5
+				WHEN S.SAT_TO_ACT_EQUIV IS NULL THEN 7
+				ELSE 6 END
+	whEN  pGPA>=2.5 THEN 
+			CASE WHEN S.SAT_TO_ACT_EQUIV>25 THEN 3
+				WHEN S.SAT_TO_ACT_EQUIV>18 THEN 4
+				WHEN S.SAT_TO_ACT_EQUIV>16 THEN 5
+				WHEN S.SAT_TO_ACT_EQUIV IS NULL THEN 7
+				ELSE 6 END
+	whEN  pGPA < 2.5 THEN 6
+	END 
+*//******************************************/
+from dbo.ACU_SPSS_AcademicSuccess S
+Inner Join ACU_ANALYTICS_Base B on B.nID=S.TALISMA_ID
+Inner Join ACU_ANALYTICS_FlagDates FD on FD.cID=B.aID
+Inner Join reporting R on R.TALISMA_ID=B.nID and R.TERM_CODE=B.TERM_CODE
+Where B.bDeleted=0
+--and S.cohort is not null
+and B.ETO <=0
+--and B.ENR = 1
+--and B.ETO =0
+--and B.STU_TYPE='F'
+and pGPA IS NOT NULL
+
+--Push Decision Rating to Prod
+Update TALSQL.tlMain.DBO.tblObjectType3_14
+Set [FldNumeric23773]=
+--sElect
+CASE 
+WHEN R.Decision_Rating IS NULL and NCAA_GPA IS NULL AND SAT_WritingEquiv IS NULL THEN 10
+WHEN R.Decision_Rating IS NULL and NCAA_GPA IS NULL and C15.[FldNumeric23833]=2 THEN 11
+WHEN R.Decision_Rating IS NULL and NCAA_GPA IS NULL THEN 9
+WHEN R.Decision_Rating IS NULL AND SAT_WritingEquiv IS NULL THEN 8
+WHEN R.Decision_Rating IS NULL THEN 7
+ELSE R.Decision_Rating END
+From reporting R
+Inner Join TALSQL.tlMain.DBO.tblObjectType3_14 C14 on C14.nID = R.TALISMA_ID
+left outer join ACU_SPSS_AcademicSuccess S on S.TALISMA_ID=R.TALISMA_ID
+LEft OUter join tlAnalytics..tblObjectType3_15 C15 on C15.nID=R.TALISMA_ID
+Where ENTRY_TERM_OFFSET<=0 and 
+(R.Decision_Rating IS NOT NULL OR R.COMP_APP_DATE is not null)
+and ([FldNumeric23773]<>CASE 
+WHEN R.Decision_Rating IS NULL and NCAA_GPA IS NULL AND SAT_WritingEquiv IS NULL THEN 10
+WHEN R.Decision_Rating IS NULL and NCAA_GPA IS NULL and C15.[FldNumeric23833]=2 THEN 11
+WHEN R.Decision_Rating IS NULL and NCAA_GPA IS NULL THEN 9
+WHEN R.Decision_Rating IS NULL AND SAT_WritingEquiv IS NULL THEN 8
+WHEN R.Decision_Rating IS NULL THEN 7
+ELSE R.Decision_Rating END
+	OR [FldNumeric23773] IS NULL)
+	
+	
+/**********************************************************************/
+--INSERT AND UPDATE CAMPUS VISITS TO REPORTINGVISITS TABLE
+Insert into ReportingVisits (aID, nID, vYear, bDeleted, dtCreated, RegDate, vDate
+							, AttendFlag, AttendType, vType, AttendCount)
+Select V.aID, FldNumeric22764
+		, CASE
+		WHEN MONTH(FldDate22605) >=3 Then YEAR(FldDate22605)+1
+		ELSE YEAR(FldDate22605)
+		END vYear
+		, V.bDeleted, V.dtCreated
+		, FldDate22606 RegDate, FldDate22605 vDate
+		,CASE WHEN [FldNumeric22608] in (1,5) THEN 1 ELSE 0 END AttendFlag
+		, [22608].tDisplayName AttendType, [22604].tDisplayName vType
+		, [FldNumeric4300071] AttendCount
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+left outer join tlAnalytics..tblEnum [22608] on [22608].nConstraintID = 3000330 and [22608].nIndex = [FldNumeric22608]
+left outer join tblEnum [22604] on [22604].nConstraintID = 3000328 and [22604].nIndex = [FldNumeric22604]
+where V.aID not in (Select aID from ReportingVisits)
+
+Update ReportingVisits Set RegDate= FldDate22606 
+From ReportingVisits RV
+Inner Join tlAnalytics..tblObjectType5006 V on V.aID=RV.aID
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+left outer join tblEnum [22604] on [22604].nConstraintID = 3000328 and [22604].nIndex = [FldNumeric22604]
+WHERE RegDate<> FldDate22606 OR (RegDate IS NULL AND FldDate22606 IS NOT NULL)
+	
+Update ReportingVisits Set vDate=FldDate22605
+From ReportingVisits RV
+Inner Join tlAnalytics..tblObjectType5006 V on V.aID=RV.aID
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+left outer join tblEnum [22604] on [22604].nConstraintID = 3000328 and [22604].nIndex = [FldNumeric22604]
+WHERE vDate<>FldDate22605 OR (vDate IS NULL AND FldDate22605 IS NOT NULL)
+	
+Update ReportingVisits Set vType= [22604].tDisplayName
+From ReportingVisits RV
+Inner Join tlAnalytics..tblObjectType5006 V on V.aID=RV.aID
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+left outer join tblEnum [22604] on [22604].nConstraintID = 3000328 and [22604].nIndex = [FldNumeric22604]
+WHERE vType <> [22604].tDisplayName OR (vType IS NULL AND [22604].tDisplayName IS NOT NULL)
+
+Update ReportingVisits Set AttendCount=[FldNumeric4300071]
+From ReportingVisits RV
+Inner Join tlAnalytics..tblObjectType5006 V on V.aID=RV.aID
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+left outer join tblEnum [22604] on [22604].nConstraintID = 3000328 and [22604].nIndex = [FldNumeric22604]
+WHERE AttendCount<>[FldNumeric4300071] OR (AttendCount IS NULL AND [FldNumeric4300071] IS NOT NULL)
+
+Update ReportingVisits
+Set cID = NULL
+--Select *
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+Where (RV.nID <> FldNumeric22764 or RV.nID is null)
+and FldNumeric22764 is not null
+
+Update ReportingVisits
+Set nID = FldNumeric22764
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+Where (RV.nID <> FldNumeric22764 or RV.nID is null)
+and FldNumeric22764 is not null
+
+
+Update ReportingVisits
+Set cID = B.aID
+--Select B.aID, *
+From  ReportingVisits V  
+Inner join ACU_ANALYTICS_Base B on B.nID = V.nID
+Inner Join (Select distinct V.aID, MAX(B.ETO) ETO
+				From ReportingVisits V
+				left outer join ACU_ANALYTICS_Base B on B.nID = V.nID
+				left outer join ACU_ANALYTICS_FlagDates FD on FD.cID = B.aID
+				left outer join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+				Where V.vDate < ET.StartDate
+				Group by V.aID
+				--having COUNT(1) > 1
+				) VM on VM.aID = V.aID and VM.ETO = B.ETO
+left outer join ACU_ANALYTICS_FlagDates FD on FD.cID = B.aID
+left outer join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where (V.cID is null OR V.cID<>B.aID)
+and V.vDate < ET.StartDate
+and B.bDeleted=0
+--order by V.nID
+
+--reset to new aID for deleted contacts
+Update ReportingVisits
+Set cID = d.aID
+--Select d.*, B.*, B1.* 
+from ReportingVisits RV
+Inner Join ACU_ANALYTICS_Base B on B.aID = RV.cID
+Inner Join (Select nID, MAX(aID) aID
+			From ACU_ANALYTICS_Base
+			Where nID in (Select nID from ACU_ANALYTICS_Base Where bDeleted = 1)
+			and bDeleted=0
+			Group by nID) d on d.nID= RV.nID
+Inner Join ACU_ANALYTICS_Base B1 on B1.aID = d.aID
+Where B.bDeleted = 1
+
+Update ReportingVisits
+Set AttendFlag=CASE WHEN [FldNumeric22608] in (1,5) THEN 1 ELSE 0 END
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+where AttendFlag IS NULL 
+	OR AttendFlag<>CASE WHEN [FldNumeric22608] in (1,5) THEN 1 ELSE 0 END
+
+Update ReportingVisits
+Set AttendType=[22608].tDisplayName
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+left outer join tlAnalytics..tblEnum [22608] on [22608].nConstraintID = 3000330 and [22608].nIndex = [FldNumeric22608]
+where AttendType IS NULL 
+	OR AttendType<>[22608].tDisplayName
+/*CASE
+		WHEN MONTH(FldDate22605) >=3 Then YEAR(FldDate22605)+1
+		ELSE YEAR(FldDate22605)
+		END vYear
+ ET.CalendarYear-CASE 
+	WHEN CEILING((cast(ET.StartDate as int)-cast(vDate as int)-@VDAYS)/365)<=0 THEN 0
+	WHEN CEILING((cast(ET.StartDate as int)-cast(vDate as int)-@VDAYS)/365)> 20 THEN 0
+	ELSE CEILING((cast(ET.StartDate as int)-cast(vDate as int)-@VDAYS)/365)
+	END, CEILING((cast(ET.StartDate as int)-cast(vDate as int)-@VDAYS)/365),
+	*/
+Declare @VDAYS int
+Set @VDAYS=543
+
+
+Update ReportingVisits
+Set vClassYear = 
+--Select *, 
+CASE WHEN V.vDate between ET.StartDate-@VDAYS and ET.StartDate THEN 'SENIOR' 
+WHEN V.vDate between ET.StartDate-@VDAYS-365 and ET.StartDate-@VDAYS-1 THEN 'JUNIOR' 
+WHEN V.vDate between ET.StartDate-@VDAYS-720 and ET.StartDate-@VDAYS-366 THEN 'SOPHOMORE'
+WHEN V.vDate between ET.StartDate-@VDAYS-1085 and ET.StartDate-@VDAYS-721 THEN 'FRESHMAN'
+WHEN V.vDate < ET.StartDate-@VDAYS-1450 THEN 'PRE-HS'  
+ELSE 'UNKNOWN' END
+--
+From ReportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where vClassYear is null
+	OR vClassYear <> CASE WHEN V.vDate between ET.StartDate-@VDAYS and ET.StartDate THEN 'SENIOR' 
+WHEN V.vDate between ET.StartDate-@VDAYS-365 and ET.StartDate-@VDAYS-1 THEN 'JUNIOR' 
+WHEN V.vDate between ET.StartDate-@VDAYS-720 and ET.StartDate-@VDAYS-366 THEN 'SOPHOMORE'
+WHEN V.vDate between ET.StartDate-@VDAYS-1085 and ET.StartDate-@VDAYS-721 THEN 'FRESHMAN'
+WHEN V.vDate < ET.StartDate-@VDAYS-1450 THEN 'PRE-HS'  
+ELSE 'UNKNOWN' END
+
+Update ReportingVisits
+Set vYear=
+--Select *,
+CASE	
+		WHEN MONTH(FldDate22605) >=3 Then YEAR(FldDate22605)+1
+		ELSE YEAR(FldDate22605)
+		END 
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+Inner Join ACU_ANALYTICS_Base B on B.aID = RV.cID
+Inner Join ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where vYear IS NULL OR vYear<>CASE
+		WHEN MONTH(FldDate22605) >=3 Then YEAR(FldDate22605)+1
+		ELSE YEAR(FldDate22605)
+		END 
+
+Update ReportingVisits
+Set vYear=vYear-1
+--Select vDate, vyear, cast(ET.StartDate as int)-cast(vDate as int), ET.* 
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+Inner Join ACU_ANALYTICS_Base B on B.aID = RV.cID
+Inner Join ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where vYear > ET.CalendarYear
+and ET.EntryTerm<>'Spring'
+and RV.vClassYear='SENIOR'
+
+Update ReportingVisits
+Set vYear=vYear+1
+--Select vDate, vyear, cast(ET.StartDate as int)-cast(vDate as int), ET.* 
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+Inner Join ACU_ANALYTICS_Base B on B.aID = RV.cID
+Inner Join ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where cast(ET.StartDate as int)-cast(vDate as int)<@VDAYS
+and cast(ET.StartDate as int)-cast(vDate as int)>0
+and vYear < ET.CalendarYear
+and ET.EntryTerm<>'Spring'
+
+
+Update ReportingVisits
+Set vYTD = CASE WHEN V.vDate <= GETDATE()-(365*(B.ETO+
+CASE vClassYear WHEN 'SENIOR' THEN 0 WHEN 'JUNIOR' THEN 1 WHEN 'SOPHOMORE' THEN 2 WHEN 'FRESHMAN' THEN 3 ELSE 4 END)
+) THEN 1 ELSE 0 END
+--
+From ReportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where vYTD is null OR vYTD <> CASE WHEN V.vDate <= GETDATE()-(365*(B.ETO+
+								CASE vClassYear WHEN 'SENIOR' THEN 0 WHEN 'JUNIOR' THEN 1 WHEN 'SOPHOMORE' THEN 2 WHEN 'FRESHMAN' THEN 3 ELSE 4 END)
+								) THEN 1 ELSE 0 END
+
+
+Update ReportingVisits
+Set SchedYTD = CASE WHEN  coalesce(V.RegDate, V.dtCreated) <= GETDATE()-(365*(B.ETO+
+CASE vClassYear WHEN 'SENIOR' THEN 0 WHEN 'JUNIOR' THEN 1 WHEN 'SOPHOMORE' THEN 2 WHEN 'FRESHMAN' THEN 3 ELSE 4 END)
+) THEN 1 ELSE 0 END
+From ReportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where SchedYTD is null OR SchedYTD <> CASE WHEN  coalesce(V.RegDate, V.dtCreated) <= GETDATE()-(365*(B.ETO+
+			CASE vClassYear WHEN 'SENIOR' THEN 0 WHEN 'JUNIOR' THEN 1 WHEN 'SOPHOMORE' THEN 2 WHEN 'FRESHMAN' THEN 3 ELSE 4 END)
+			) THEN 1 ELSE 0 END
+
+Update ReportingVisits
+Set vAppDays = cast(FD.APP as int)-cast(V.vDate as int)
+From ReportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join ACU_ANALYTICS_FlagDates FD on FD.cID = B.aID
+inner join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+WHERE cast(FD.APP as int)-cast(V.vDate as int) >= 0
+
+Update ReportingVisits
+Set vCompDays = cast(FD.COMP as int)-cast(V.vDate as int)
+From ReportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join ACU_ANALYTICS_FlagDates FD on FD.cID = B.aID
+inner join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+WHERE cast(FD.COMP as int)-cast(V.vDate as int) >= 0
+
+Update ReportingVisits
+Set vDepDays = cast(FD.CNF as int)-cast(V.vDate as int)
+From ReportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join ACU_ANALYTICS_FlagDates FD on FD.cID = B.aID
+inner join tlAnalytics..ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+WHERE cast(FD.CNF as int)-cast(V.vDate as int) >= 0
+
+
+Update ReportingVisits Set vHoliday = 0
+Update ReportingVisits Set vHoliday = 1
+WHERE vDate in (
+'12-31-2004', '1-17-2005', '2-21-2005', '5-30-2005', '7-4-2005', '9-5-2005', '10-10-2005', '11-11-2005', '11-24-2005', '12-26-2005'
+,'1-2-2006', '1-16-2006', '2-20-2006', '5-29-2006', '7-4-2006', '9-4-2006', '10-9-2006', '11-10-2006', '11-23-2006', '12-25-2006'
+,'1-1-2007', '1-15-2007', '2-19-2007', '5-28-2007', '7-4-2007', '9-3-2007', '10-8-2007', '11-12-2007', '11-22-2007', '12-25-2007'
+,'1-1-2008', '1-21-2008', '2-18-2008', '5-26-2008', '7-4-2008', '9-1-2008', '10-13-2008', '11-11-2008', '11-27-2008', '12-25-2008'
+,'1-1-2009', '1-19-2009', '2-16-2009', '5-25-2009', '7-3-2009', '9-7-2009', '10-12-2009', '11-11-2009', '11-26-2009', '12-25-2009'
+,'1-1-2010', '1-18-2010', '2-15-2010', '5-31-2010', '7-5-2010', '9-6-2010', '10-11-2010', '11-11-2010', '11-25-2010', '12-24-2010'
+,'12-31-2010', '1-17-2011', '2-21-2011', '5-30-2011', '7-4-2011', '9-5-2011', '10-10-2011', '11-11-2011', '11-24-2011', '12-26-2011')
+
+Update ReportingVisits 
+Set vDayOfWeek = datepart(dw, vDate) 
+
+Update ReportingVisits 
+Set dtCreated = 
+CASE WHEN dtCreated<RegDate THEN dtCreated ELSE RegDate END
+
+Update ReportingVisits
+Set vStage = CASE WHEN FD.CNF < V.vDate THEN 'CNF'
+WHEN FD.ADM < V.vDate THEN 'ADM'
+WHEN FD.COMP < V.vDate THEN 'COMP'
+WHEN FD.APP < V.vDate THEN 'APP'
+WHEN FD.INQ < V.vDate THEN 'INQ'
+WHEN FD.INQ >= V.vDate THEN 'SUS' 
+ELSE 'UNK' END
+from reportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join ACU_ANALYTICS_FlagDates FD on FD.cID = B.aID
+
+
+Update ReportingVisits
+Set vSchedStage = CASE WHEN FD.CNF < V.dtCreated  THEN 'CNF'
+WHEN FD.ADM < V.dtCreated THEN 'ADM'
+WHEN FD.COMP < V.vDate THEN 'COMP'
+WHEN FD.APP < V.dtCreated THEN 'APP'
+WHEN FD.INQ < V.dtCreated THEN 'INQ'
+WHEN FD.INQ >= V.dtCreated THEN 'SUS' 
+ELSE 'UNK' END
+from reportingVisits V
+inner join ACU_ANALYTICS_Base B on B.aID = V.cID
+inner join ACU_ANALYTICS_FlagDates FD on FD.cID = B.aID
+
+
+Update ReportingVisits
+Set bDeleted= V.bDeleted
+--Select  RV.nID, RV.bDeleted, V.bDeleted
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+left outer join tlAnalytics..tblEnum [22608] on [22608].nConstraintID = 3000330 and [22608].nIndex = [FldNumeric22608]
+left outer join tblEnum [22604] on [22604].nConstraintID = 3000328 and [22604].nIndex = [FldNumeric22604]
+Inner Join ReportingVisits RV on RV.aID = V.aID
+where RV.bDeleted <> V.bDeleted
+
+Update ReportingVisits
+Set bDeleted=1
+From tlAnalytics..tblObjectType5006 V
+Inner Join tlAnalytics..tblObjectType5006_1 V1 on V1.nID = V.aID
+Inner join ReportingVisits RV on RV.aID = V.aID
+Inner Join ACU_ANALYTICS_Base B on B.aID = RV.cID
+Inner Join ACU_EntryTerm ET on ET.TermCode = B.TERM_CODE
+where (cast(ET.StartDate as int)-cast(vDate as int)) <0
+
+Update ReportingVisits
+Set vDateYTD = cast(cast(DATEPART("MM", vDate) as nvarchar)+'-'+cast(DATEPART("D", vDate) as nvarchar)+'-2012'as datetime)
+From ReportingVisits
+
+--Update Custom Field in reporting table for Student Aid Services data feed based on visits and student type
+Update reporting
+set SAS_CustomGroup=CASE WHEN R.APP_TYPE='T' THEN 'TRF'
+						WHEN R.APP_TYPE='N' and V.ct>0 THEN 'FRV'
+						WHEN R.APP_TYPE='N' and R.MARKET_SEGMENT='INT' THEN 'FRV'
+						ELSE 'FRN' END
+From reporting R
+left outer join (Select nID, COUNT(1) ct from ReportingVisits RV where RV.vClassYear='Senior' and RV.bDeleted=0 and RV.vType<>'Group Visit'
+	and (RV.AttendFlag=1 OR RV.vDate>GETDATE())  group by nID
+) V on V.nID=R.TALISMA_ID
+and (SAS_CustomGroup<>CASE WHEN R.APP_TYPE='T' THEN 'TRF'
+						WHEN R.APP_TYPE='N' and V.ct>0 THEN 'FRV'
+						WHEN R.APP_TYPE='N' and R.MARKET_SEGMENT='INT' THEN 'FRV'
+						ELSE 'FRN' END
+	OR SAS_CustomGroup IS NULL)
+
+Update Reporting
+Set SAS_purl='nextsteps.acu.edu/'+LOWER(replace(C1.[FldString21605], ' ', '-')+'-'+REPLACE(C.tLastName, ' ', '-'))
+--Select 'nextsteps.acu.edu/'+LOWER(replace(C1.[FldString21605], ' ', '-')+'-'+REPLACE(C.tLastName, ' ', '-'))
+from Reporting R
+Inner Join tlAnalytics..tblCustomer C on C.aCustID=R.TALISMA_ID
+Inner Join tlAnalytics..tblObjectType3_1 C1 on C1.nID = C.aCustID
+where SAS_purl<>'nextsteps.acu.edu/'+LOWER(replace(C1.[FldString21605], ' ', '-')+'-'+REPLACE(C.tLastName, ' ', '-')) or SAS_purl IS NULL
+and R.ENTRY_TERM_OFFSET<=0
+
+/* REPORTING PULL TO FRONTLOAD PURLS
+Select R.TALISMA_ID, R.BANNER_ID, 'nextsteps.acu.edu/'+LOWER(replace(C1.[FldString21605], ' ', '-')+'-'+REPLACE(C.tLastName, ' ', '-')) purl
+, C1.[FldString21605] FirstName
+, C.tLastName LastName
+, CASE WHEN ADMIT_DATE IS NOT NULL THEN 1 ELSE 0 END isAdmitted
+, CASE WHEN C1.FldString21605 like '%-%' THEN 1 ELSE 0 END ContainsDash
+, CASE WHEN C1.FldString21605 like '% %' THEN 1 ELSE 0 END ContainsSpace
+, CASE WHEN C1.FldString21605 like '%''%' THEN 1 ELSE 0 END ContainsApostrophe
+, CASE WHEN substring(C1.FldString21605, 2, 250) COLLATE SQL_Latin1_General_CP1_CS_AS <> lower(substring(C1.FldString21605, 2, 250)) COLLATE SQL_Latin1_General_CP1_CS_AS THEN 1 ELSE 0 END ContainsCaps
+, CASE WHEN C1.FldString21605 like '%-%'
+	OR C1.FldString21605 like '% %'
+	OR C1.FldString21605 like '%''%'
+	OR substring(C1.FldString21605, 2, 250) COLLATE SQL_Latin1_General_CP1_CS_AS <> lower(substring(C1.FldString21605, 2, 250)) COLLATE SQL_Latin1_General_CP1_CS_AS 
+	THEN 1 ELSE 0 END IrregularMasterFlag
+from Reporting R
+Inner Join tlAnalytics..tblCustomer C on C.aCustID=R.TALISMA_ID
+Inner Join tlAnalytics..tblObjectType3_1 C1 on C1.nID = C.aCustID
+where  R.ENTRY_TERM_OFFSET<=0
+*/
+
