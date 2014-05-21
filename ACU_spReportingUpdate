@@ -1,0 +1,214 @@
+USE [tlArchive]
+GO
+/****** Object:  StoredProcedure [dbo].[ACU_spReportingUpdate]    Script Date: 05/21/2014 10:54:50 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER PROCEDURE [dbo].[ACU_spReportingUpdate]  AS
+SET ANSI_NULLS OFF
+
+
+/***************Replicate ACU_EntryTerm Table to tlAnalytics************************/
+Drop Table tlAnalytics.dbo.ACU_EntryTerm
+
+select * into tlAnalytics.dbo.ACU_EntryTerm 
+from [TALSQL].tlmain.dbo.acu_entryterm
+
+Drop Table ACU_EntryTerm
+
+select * into ACU_EntryTerm 
+from tlAnalytics.dbo.acu_entryterm
+
+/***************Replicate tblTerritoryAssign Table to tlAnalytics************************/
+Drop Table tlAnalytics.dbo.tblTerritoryAssign
+
+select * into tlAnalytics.dbo.tblTerritoryAssign
+from [TALSQL].tlmain.dbo.tblTerritoryAssign
+
+/***************Replicate tblTerritory Table to tlAnalytics************************/
+Drop Table tlAnalytics.dbo.tblTerritory
+
+select * into tlAnalytics.dbo.tblTerritory
+from [TALSQL].tlmain.dbo.tblTerritory
+
+/***************Replicate tblTerritory Table to tlAnalytics************************/
+Drop Table tlAnalytics.dbo.ACU_ZIPCODES
+
+select * into tlAnalytics.dbo.ACU_ZIPCODES
+from [TALSQL].tlmain.dbo.ACU_ZIPCODES
+
+Drop Table tlAnalytics.dbo.ACU_RequirementRules
+select * into tlAnalytics.dbo.ACU_RequirementRules
+from [TALSQL].tlmain.dbo.ACU_RequirementRules
+
+Drop Table tlAnalytics.dbo.ACU_Requirements
+select * into tlAnalytics.dbo.ACU_Requirements
+from [TALSQL].tlmain.dbo.ACU_Requirements
+
+--Pull recent fafsa data into reporting
+Delete from ACU_FAFSAHistory
+Where RCRAPP1_AIDY_CODE=(SELECT REPLACE(RIGHT(FiscalYear, 5), '-', '') From tlAnalytics.dbo.ACU_EntryTerm where EntryTermOffset=0 and EntryTerm='Fall')
+
+Insert Into ACU_FAFSAHistory
+Select * from  talsql.tlmain.dbo.ACU_FAFSAHistory
+Where RCRAPP1_AIDY_CODE=(SELECT REPLACE(RIGHT(FiscalYear, 5), '-', '') From tlAnalytics.dbo.ACU_EntryTerm where EntryTermOffset=0 and EntryTerm='Fall')
+
+/***************Upate Reporting Database************************/
+--remove all future term students
+delete from [tlArchive].[dbo].[reporting] where Entry_Term_Offset <= 0 oR ENTRY_TERM_OFFSET is null
+
+
+--add them all back in with updated data
+set identity_insert reporting off
+insert into [tlArchive].[dbo].[reporting] 
+(
+[BANNER_ID] ,  [TALISMA_ID] ,   [SSN] ,  [ETHNICITY] ,  
+[INTERNATIONAL_IND] , [GENDER] , [BIRTH_DATE],  [RELIGION_CODE],  [TERM_CODE],   [APP_DATE] ,         
+[ADMIT_DATE] ,   [APP_TYPE], [ADMIT_TYPE], [LEVEL_CODE] , [ENROLL_STATUS],
+[FIRST_TERM_BILL_HRS] ,[STATE] , 
+[ZIP_CODE] ,  [RECRUIT_REGION] ,  [CAMPUS_VISIT] , [SAT_TO_ACT_EQUIV] ,  [INTENDED_MAJOR] ,  
+[ISIR_DATE] , [FM_EFC] ,  [FA_MERIT],  
+[FAFSA_COMPET1] ,  [FAFSA_COMPET2] ,  [FAFSA_COMPET3], 
+[MARKET_SEGMENT] ,  [LEGACY] , [SIBLING] , 
+[LEADERSHIP_CAMP], [LATITUDE], [LONGITUDE], [DISTANCE_FROM_ACU],
+[INQ_DATE], [DEPOSIT_DATE],
+[PASSPORT_DATE], [INITIAL_SOURCE], [PASSPORT_SESSION],
+[CNF_DATE], [CANCEL_DATE], [UNIV_ATTENDED],
+[CONCENTRATION], [STUDENT_STATUS], [PRES_SCHOLAR],
+[FIRST_NAME], [LAST_NAME], [ADDRESS], [CITY],
+[acusubstring], [board], [facstaff], [act], [sat], [INQ_Source], 
+[COUNTY], [AID_YEAR], [INTENDED_DEPARTMENT], [INTENDED_COLLEGE], 
+[CLASS_RANK_QUARTILE], [UNMET_NEED], [RECRUITED_ATHLETE_FLAG], [FA_PELL],
+[COMP_APP_DATE], [CANCEL_REASON], [TERRITORY_CODE], [APP_SOURCE], [COLLEGE_CEEB],
+[DEFER_DATE], [HS_GradYear], [HS_GPA_CORE]
+
+)
+
+select left([FldString22559],9) BannerID,
+left(aCustID,10) ContactID,
+left([FldString22560],9) SSN,
+(Select left(tDisplayName,1) from tblEnum where nConstraintID = 3000147 and nIndex = [FldNumeric21863])  ETHNICITY,
+(select left(tdisplayname,2) from tblenum where nConstraintID = 3000087 and nIndex = [FldNumeric21674]) Int_Flag,
+(Select left(tDisplayName,1) from tblEnum where nConstraintID = 3000148 and nIndex = [FldNumeric21864])  GENDER,
+ddateofbirth Birth_Date,
+(Select left(tDisplayName,2) from tblEnum where nConstraintID = 3000149 and nIndex = [FldNumeric21866])  DENOM,
+(Select left(tDisplayName,6) from tblEnum where nConstraintID = 3000094 and nIndex = [FldNumeric21786])  ENTRY_TERM,
+[FldDate21824]  APP_DATE,
+[FldDate21825]  ADM_DATE,
+(Select left(tDisplayName,1) from tblEnum where nConstraintID = 3000101 and nIndex = [FldNumeric21793]) STUDENT_TYPE,
+(Select left(tDisplayName,2) from tblEnum where nConstraintID = 3000105 and nIndex = [FldNumeric21798]) ADMIT_TYPE,
+(Select left(tDisplayName,2) from tblEnum where nConstraintID = 3000095 and nIndex = [FldNumeric21787]) LEVL,
+(Select left(tDisplayName,20) from tblEnum where nConstraintID = 3000093 and nIndex = [FldNumeric21785])  PROSPECT_STATUS,
+left([FldString22485],2) REg_Hours,
+(Select left(tDisplayName,2) from tblEnum where nConstraintID = 3000470 and nIndex = [FldNumeric22811])  STATE,
+left(tPin,10) ZIP,
+[FldNumeric22749] TERRITORY_MANAGER, 
+(select left(tdisplayname,1) from tblenum where nConstraintID = 3000535 and nIndex = [FldNumeric22929]) Visit,
+left([FldNumeric21958],2) ACTEquiv,
+(Select left(tDisplayName,4) from tblEnum where nConstraintID = 3000097 and nIndex = [FldNumeric21789]) MAJOR,
+[FldDate21720] FAFSADate, 
+left([FldString21712],8) EFC,
+left([FldFloat21716],8) GiftAid, 
+left([FldString21721],6) FAFSA1, 
+left([FldString21722],6) FAFSA2, 
+left([FldString21723],6) FAFSA3, 
+(Select left(tDisplayName,4) from tblEnum where nConstraintID = 3000120 and nIndex = [FldNumeric21819])  MKT_SEGMENT, 
+(select left(tdisplayname,10) from tblenum where nConstraintID = 3000123 and nIndex = [FldNumeric21828]) LEGACY, 
+(select left(tdisplayname,10) from tblenum where nConstraintID = 3000128 and nIndex = [FldNumeric21833]) SIBLING, 
+(select left(tdisplayname,20) from tblenum where nConstraintID = 3000127 and nIndex = [FldNumeric21832]) CAMPER,  
+left([FldFloat4300043],8) Latitude,
+left([FldFloat4300044],8) Longitude,
+left([FldFloat4300047],8) Distance,
+[FldDate21823] INQ_DATE,
+[FldDate21826] DEP_DATE,
+[FldDate4300419] Passport_Date,
+left([FldString4300023],60) Initial_Source,
+(select left(tdisplayname,15) from tblenum where nConstraintID = 3000150 and nIndex = [FldNumeric21868]) Passport,
+[FldDate21827] CNF_DATE,
+[FldDate21810]  CANCEL_DATE,
+left([FldString4300032],60) UNIV_ATTENDED,
+(Select left(tDisplayName,4) from tblEnum where nConstraintID = 3000098 and nIndex = [FldNumeric21790]) CONCENTRATION,
+(Select left(tDisplayName,2) from tblEnum where nConstraintID = 3000100 and nIndex = [FldNumeric21792]) STUDENT_STATUS,
+(select left(tdisplayname,30) from tblenum where nConstraintID = 3000160 and nIndex = [FldNumeric21886]) PRESSCHOLAR,
+left(tfirstname,25),
+left(tlastname,30),
+left(tstreet,50),
+left(tCity,30),
+left(FldString22269,20) acusubstring, 
+(select left(tdisplayname,30) from tblenum where nConstraintID = 3000124 and nIndex = [FldNumeric21829]) board,
+(select left(tdisplayname,30) from tblenum where nConstraintID = 3000125 and nIndex = [FldNumeric21830]) facstaff,
+[FldNumeric22841] act, 
+[FldNumeric22842] sat,
+left([FldString4300049], 50) inq_source,
+[FldString22267] COUNTY,
+(select left(tdisplayname,4) from tblenum where nConstraintID = 3000378 and nIndex = [FldNumeric22659]) AID_YEAR,
+(select tdisplayname from tblenum where nConstraintID = 3000575 and nIndex = [FldNumeric4300036]) Department,
+(select tdisplayname from tblenum where nConstraintID = 3000576 and nIndex = [FldNumeric4300037]) College,
+Q.tDisplayName CLASS_RANK_QUARTILE,
+[FldFloat21714] UnmetNeed,
+CASE WHEN [FldNumeric21846] IS NOT NULL THEN 'Y' ELSE NULL END,
+PELL.PA, --Pell Amount
+C12.[FldDate23370], --COMP_APP_DATE (Application File Completed Date)
+[21812].tDisplayName --CANCEL_REASON
+,[FldNumeric22758] --TERRITORY CODE
+, [FldString23729] --Initial App Source
+, COALESCE(CollegeTo.CEEB, --College with Max 'To' date on PSU Colleges
+		 CollegeFrom.CEEB, --College with Max 'From' date on PSU Colleges
+		 (select FldString22735 from tblObjectType5004_1 I1 where I1.nID = C7.[FldNumeric22738])) College --Current College on GS Academic
+, C12.[FldDate23463] DEFER_DATE
+, C3.[FldString22390] HS_GradYear
+, C14.[FldFloat23702] HS_GPA_CORE
+
+From [TALRPT].tlAnalytics.dbo.tblCustomer C 
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_1 C1 on C.aCustID = C1.nID
+inner join [TALRPT].tlAnalytics.dbo.tblObjectType3_3 C3 on C.aCustID = C3.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_4 C4 on C.aCustID = C4.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_5 C5 on C.aCustID = C5.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_6 C6 on C.aCustID = C6.nID
+--left outer join [TALRPT].tlAnalytics.dbo.tbluser tbluser on tbluser.aUserId = c6.FldNumeric22749
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_7 C7 on C.aCustID = C7.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_8 C8 on C.aCustID = C8.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_9 C9 on C.aCustID = C9.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_10 C10 on C.aCustID = C10.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_11 C11 on C.aCustID = C11.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_12 C12 on C.aCustID = C12.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_14 C14 on C.aCustID = C14.nID
+left outer join [TALRPT].tlAnalytics.dbo.tblObjectType3_18 C18 on C.aCustID = C18.nID
+left outer join tblEnum Q on Q.nIndex = FldNumeric22961 and Q.nConstraintID = 3000553
+left outer join tblEnum [21812] on [21812].nConstraintID = 3000114 and [21812].nIndex = [FldNumeric21812]
+left outer join (Select distinct nID, max(FldFloat_21736) PA 
+				from [TALRPT].tlAnalytics.dbo.tblContact_11174
+				Where FldString_22864 = 'PELL'
+				and FldNumeric_22666 = 6
+				Group by nID) PELL on PELL.nID = C.aCustID
+LEFT OUTER JOIN (Select DISTINCT CT.nID nID, MIN([FldString_22420]) CEEB 
+				from [TALRPT].tlAnalytics.dbo.[tblContact_11186] CT
+				Inner Join (
+					Select nID, MAX([FldDate_22401]) dt 
+					from [TALRPT].tlAnalytics.dbo.[tblContact_11186] 
+					Group by nID
+					) CTU on CTU.nID=CT.nID and CTU.dt=CT.[FldDate_22401]
+				Where [FldString_22420] IS NOT NULL
+				Group by Ct.nID
+				) CollegeTo on CollegeTo.nID=C.aCustID
+LEFT OUTER JOIN (Select DISTINCT CT.nID nID, MIN([FldString_22420]) CEEB 
+				from [TALRPT].tlAnalytics.dbo.[tblContact_11186] CT
+				Inner Join (
+					Select nID, MAX([FldDate_22400]) dt 
+					from [TALRPT].tlAnalytics.dbo.[tblContact_11186] Group by nID
+					) CTU on CTU.nID=CT.nID and CTU.dt=CT.[FldDate_22400]
+				Where [FldString_22420] IS NOT NULL
+				Group by Ct.nID
+				) CollegeFrom on CollegeFrom.nID=C.aCustID	
+				
+Where aCustID in (Select distinct nID from [TALRPT].tlAnalytics.dbo.tblContactEventAudit 
+          where nUserID <> 1)
+AND [FldNumeric21785] in (4,5,6,7,8)
+AND [FldFloat4300075] <= 0
+and [FldNumeric21793] In (17,18) -- student type is new or transfer
+AND [FldNumeric21787] > ' '
+AND c.bDeleted = 0
+AND c.nMergedWithID is NULL
+
